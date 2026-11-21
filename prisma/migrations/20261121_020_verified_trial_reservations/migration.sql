@@ -16,7 +16,7 @@ CREATE TABLE `verified_business_identities` (
   CONSTRAINT `fk_verified_identity_business`
     FOREIGN KEY (`business_id`) REFERENCES `businesses`(`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
-);
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE TABLE `introductory_trial_grants` (
   `id` CHAR(36) NOT NULL,
@@ -39,4 +39,4 @@ CREATE TABLE `introductory_trial_grants` (
     FOREIGN KEY (`business_id`, `checkout_order_id`)
     REFERENCES `checkout_orders`(`business_id`, `id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
-);
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
