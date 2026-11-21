@@ -1,0 +1,576 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum BusinessStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum RegistrationType {
+  SOLE_PROPRIETOR
+  PRIVATE_LIMITED
+  COMMUNITY_ORGANIZATION
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum PreferredLanguage {
+  en
+  ta
+  si
+}
+
+enum SubscriptionStatus {
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  EXPIRED
+  CANCELLED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum CheckoutOrderStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PlatformPaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentInitiationStatus {
+  RESERVED
+  INITIATING
+  INITIATED
+  UNKNOWN
+  FAILED
+}
+
+enum PromotionStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+enum PaymentWebhookStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum SubscriptionEventType {
+  CREATED
+  TRIAL_STARTED
+  ACTIVATED
+  RENEWED
+  PAYMENT_FAILED
+  PAST_DUE
+  EXPIRED
+  CANCELLED
+  PLAN_CHANGED
+  PROMOTION_APPLIED
+}
+
+model User {
+  id                String            @id @default(uuid()) @db.Char(36)
+  phone             String            @unique @db.VarChar(20)
+  fullName          String?           @map("full_name") @db.VarChar(150)
+  preferredLanguage PreferredLanguage @default(en) @map("preferred_language")
+  phoneVerifiedAt   DateTime?         @map("phone_verified_at")
+  email             String?           @db.VarChar(191)
+  status            UserStatus        @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships         BusinessMembership[]
+  sentInvitations     BusinessInvitation[] @relation("InvitationSender")
+  acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptor")
+
+  @@map("users")
+}
+
+model Business {
+  id                    String           @id @default(uuid()) @db.Char(36)
+  name                  String           @db.VarChar(191)
+  registrationType      RegistrationType @map("registration_type")
+  status                BusinessStatus   @default(PENDING)
+  currentSubscriptionId String?          @unique @map("current_subscription_id") @db.Char(36)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships          BusinessMembership[]
+  roles                Role[]
+  invitations          BusinessInvitation[]
+  subscriptions        BusinessSubscription[]       @relation("BusinessSubscriptionHistory")
+  checkoutOrders       CheckoutOrder[]
+  paymentTransactions  PlatformPaymentTransaction[]
+  promotionRedemptions PromotionRedemption[]
+  currentSubscription  BusinessSubscription?        @relation("CurrentBusinessSubscription", fields: [id, currentSubscriptionId], references: [businessId, id], onDelete: Restrict)
+
+  @@unique([id, currentSubscriptionId])
+  @@map("businesses")
+}
+
+model BusinessMembership {
+  id         String           @id @default(uuid()) @db.Char(36)
+  businessId String           @map("business_id") @db.Char(36)
+  userId     String           @map("user_id") @db.Char(36)
+  roleId     String           @map("role_id") @db.Char(36)
+  status     MembershipStatus @default(ACTIVE)
+
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  role Role @relation(fields: [businessId, roleId], references: [businessId, id], onDelete: Restrict)
+
+  @@unique([businessId, userId])
+  @@index([userId, status])
+  @@index([businessId, status])
+  @@index([businessId, roleId])
+  @@map("business_memberships")
+}
+
+model Role {
+  id           String  @id @default(uuid()) @db.Char(36)
+  businessId   String  @map("business_id") @db.Char(36)
+  name         String  @db.VarChar(50)
+  isSystemRole Boolean @default(false) @map("is_system_role")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business    Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  memberships BusinessMembership[]
+  invitations BusinessInvitation[]
+  permissions RolePermission[]
+
+  @@unique([businessId, name])
+  @@unique([businessId, id])
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Char(36)
+  key         String  @unique @db.VarChar(100)
+  description String? @db.VarChar(255)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Char(36)
+  permissionId String @map("permission_id") @db.Char(36)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model BusinessInvitation {
+  id              String           @id @default(uuid()) @db.Char(36)
+  businessId      String           @map("business_id") @db.Char(36)
+  invitedPhone    String           @map("invited_phone") @db.VarChar(20)
+  roleId          String           @map("role_id") @db.Char(36)
+  invitedByUserId String           @map("invited_by_user_id") @db.Char(36)
+  status          InvitationStatus @default(PENDING)
+
+  expiresAt        DateTime  @map("expires_at")
+  acceptedByUserId String?   @map("accepted_by_user_id") @db.Char(36)
+  acceptedAt       DateTime? @map("accepted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  role Role @relation(fields: [businessId, roleId], references: [businessId, id], onDelete: Restrict)
+
+  invitedBy User @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  acceptedBy User? @relation("InvitationAcceptor", fields: [acceptedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, invitedPhone, status])
+  @@index([invitedPhone, status, expiresAt])
+  @@index([businessId, roleId])
+  @@index([invitedByUserId])
+  @@index([acceptedByUserId])
+  @@map("business_invitations")
+}
+
+model SubscriptionPlan {
+  id String @id @default(uuid()) @db.Char(36)
+
+  code String @unique @db.VarChar(50)
+  name String @db.VarChar(150)
+
+  priceLkr        Decimal         @map("price_lkr") @db.Decimal(12, 2)
+  billingInterval BillingInterval @default(MONTHLY) @map("billing_interval")
+
+  invoiceLimit Int @default(30) @map("invoice_limit")
+  trialDays    Int @default(0) @map("trial_days")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subscriptions  BusinessSubscription[]
+  checkoutOrders CheckoutOrder[]
+
+  @@map("subscription_plans")
+}
+
+model BusinessSubscription {
+  id String @id @default(uuid()) @db.Char(36)
+
+  businessId String @map("business_id") @db.Char(36)
+  planId     String @map("plan_id") @db.Char(36)
+
+  status SubscriptionStatus @default(PENDING)
+
+  startsAt           DateTime? @map("starts_at")
+  trialEndsAt        DateTime? @map("trial_ends_at")
+  currentPeriodStart DateTime? @map("current_period_start")
+  currentPeriodEnd   DateTime? @map("current_period_end")
+  cancelledAt        DateTime? @map("cancelled_at")
+
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  business           Business  @relation("BusinessSubscriptionHistory", fields: [businessId], references: [id], onDelete: Restrict)
+  currentForBusiness Business? @relation("CurrentBusinessSubscription")
+
+  plan         SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict)
+  entitlements SubscriptionEntitlement[]
+  events       SubscriptionEvent[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@index([status, currentPeriodEnd])
+  @@index([planId])
+  @@map("business_subscriptions")
+}
+
+model CheckoutOrder {
+  id String @id @default(uuid()) @db.Char(36)
+
+  businessId String @map("business_id") @db.Char(36)
+  planId     String @map("plan_id") @db.Char(36)
+
+  status CheckoutOrderStatus @default(PENDING)
+
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12, 2)
+
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(191)
+
+  gatewayOrderId String? @unique @map("gateway_order_id") @db.VarChar(191)
+
+  expiresAt DateTime? @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  payments PlatformPaymentTransaction[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@index([createdAt])
+  @@map("checkout_orders")
+}
+
+model PlatformPaymentTransaction {
+  id String @id @default(uuid()) @db.Char(36)
+
+  businessId      String @map("business_id") @db.Char(36)
+  checkoutOrderId String @map("checkout_order_id") @db.Char(36)
+  idempotencyKey  String @unique @map("idempotency_key") @db.VarChar(191)
+
+  gateway              String  @db.VarChar(50)
+  gatewayTransactionId String? @map("gateway_transaction_id") @db.VarChar(191)
+
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12, 2)
+
+  status PlatformPaymentStatus @default(PENDING)
+
+  initiationStatus PaymentInitiationStatus @default(RESERVED) @map("initiation_status")
+  merchantReference String? @unique(map: "uq_payment_merchant_reference") @map("merchant_reference") @db.VarChar(191)
+  gatewayOrderId String? @map("gateway_order_id") @db.VarChar(191)
+  initiationStartedAt DateTime? @map("initiation_started_at") @db.DateTime(3)
+  initiationCompletedAt DateTime? @map("initiation_completed_at") @db.DateTime(3)
+
+  verifiedAt DateTime? @map("verified_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict)
+
+  reconciliationEvidence PaymentReconciliationEvidence[]
+
+  @@unique([gateway, gatewayTransactionId])
+  @@unique([gateway, gatewayOrderId], map: "uq_payment_gateway_order")
+  @@index([businessId, status])
+  @@index([checkoutOrderId])
+  @@index([initiationStatus, initiationStartedAt], map: "idx_payment_initiation_recovery")
+  @@map("platform_payment_transactions")
+}
+
+model PromotionCode {
+  id String @id @default(uuid()) @db.Char(36)
+
+  code String @unique @db.VarChar(50)
+
+  freeMonths      Int  @map("free_months")
+  maxRedemptions  Int? @map("max_redemptions")
+  redemptionCount Int  @default(0) @map("redemption_count")
+
+  status PromotionStatus @default(ACTIVE)
+
+  startsAt  DateTime? @map("starts_at")
+  expiresAt DateTime? @map("expires_at")
+
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+  redemptions PromotionRedemption[]
+
+  @@map("promotion_codes")
+}
+
+model PaymentWebhookEvent {
+  id String @id @default(uuid()) @db.Char(36)
+
+  gateway String @db.VarChar(50)
+
+  gatewayEventId String @map("gateway_event_id") @db.VarChar(191)
+
+  eventType String @map("event_type") @db.VarChar(100)
+
+  status PaymentWebhookStatus @default(RECEIVED)
+
+  payload Json
+
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  processedAt DateTime? @map("processed_at")
+
+  errorMessage String? @map("error_message") @db.Text
+
+  reconciliationEvidence PaymentReconciliationEvidence[]
+
+  @@unique([gateway, gatewayEventId])
+  @@index([status, receivedAt])
+  @@map("payment_webhook_events")
+}
+
+model PromotionRedemption {
+  id String @id @default(uuid()) @db.Char(36)
+
+  promotionCodeId String @map("promotion_code_id") @db.Char(36)
+  businessId      String @map("business_id") @db.Char(36)
+
+  freeMonthsGranted Int @map("free_months_granted")
+
+  redeemedAt DateTime @default(now()) @map("redeemed_at")
+
+  promotionCode PromotionCode @relation(fields: [promotionCodeId], references: [id], onDelete: Restrict)
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
+  @@unique([promotionCodeId, businessId])
+  @@index([businessId, redeemedAt])
+  @@map("promotion_redemptions")
+}
+
+model SubscriptionEntitlement {
+  id String @id @default(uuid()) @db.Char(36)
+
+  subscriptionId String @map("subscription_id") @db.Char(36)
+
+  featureKey String @map("feature_key") @db.VarChar(100)
+
+  isEnabled Boolean @default(true) @map("is_enabled")
+
+  usageLimit Int? @map("usage_limit")
+
+  warningThreshold Int? @map("warning_threshold")
+
+  periodStart DateTime  @map("period_start")
+  periodEnd   DateTime? @map("period_end")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subscription BusinessSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([subscriptionId, featureKey, periodStart])
+  @@index([featureKey, isEnabled])
+  @@index([subscriptionId, periodEnd])
+  @@map("subscription_entitlements")
+}
+
+model SubscriptionEvent {
+  id String @id @default(uuid()) @db.Char(36)
+
+  subscriptionId String @map("subscription_id") @db.Char(36)
+
+  eventType SubscriptionEventType @map("event_type")
+
+  previousStatus SubscriptionStatus? @map("previous_status")
+  newStatus      SubscriptionStatus? @map("new_status")
+
+  description String? @db.VarChar(500)
+
+  metadata Json?
+
+  occurredAt DateTime @default(now()) @map("occurred_at")
+
+  subscription BusinessSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@index([subscriptionId, occurredAt])
+  @@index([eventType, occurredAt])
+  @@map("subscription_events")
+}
+
+model Session {
+  sessionId String  @id @map("session_id") @db.VarChar(128)
+  expires   Int     @db.UnsignedInt
+  data      String? @db.MediumText
+
+  @@index([expires], map: "idx_sessions_expires")
+  @@map("sessions")
+}
+
+model OtpVerification {
+  id        String   @id @db.Char(36)
+  phone     String   @unique(map: "uq_otp_verifications_phone") @db.VarChar(20)
+  otpHash   String   @map("otp_hash") @db.VarChar(255)
+  attempts  Int      @default(0) @db.UnsignedInt
+  expiresAt DateTime @map("expires_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@index([expiresAt], map: "idx_otp_verifications_expires_at")
+  @@map("otp_verifications")
+}
+
+enum ReconciliationEvidenceSource {
+  PROVIDER_STATUS_QUERY
+  WEBHOOK_REPORT
+  MANUAL_BANK_RECORD
+}
+
+enum ReconciliationEvidenceOutcome {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  NOT_FOUND
+  INCONCLUSIVE
+}
+
+enum ReconciliationEvidenceAssessment {
+  NOT_ASSESSED
+  MATCHED_FOR_REVIEW
+  INCONCLUSIVE
+  ESCALATE
+}
+
+enum ReconciliationAuthenticationStatus {
+  UNVERIFIED
+  AUTHENTICATED
+  REJECTED
+}
+
+model PaymentReconciliationEvidence {
+  id String @id @default(uuid()) @db.Char(36)
+
+  paymentId String @map("payment_id") @db.Char(36)
+  webhookEventId String? @map("webhook_event_id") @db.Char(36)
+
+  gateway String @db.VarChar(50)
+  source ReconciliationEvidenceSource
+  sourceReference String @map("source_reference") @db.VarChar(191)
+
+  observedAt DateTime @map("observed_at") @db.DateTime(3)
+  receivedAt DateTime @default(now()) @map("received_at") @db.DateTime(3)
+
+  claimedBusinessId String @map("claimed_business_id") @db.VarChar(191)
+  claimedCheckoutOrderId String @map("claimed_checkout_order_id") @db.VarChar(191)
+
+  merchantReference String @map("merchant_reference") @db.VarChar(191)
+
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12, 2)
+  currency String @db.VarChar(3)
+
+  gatewayOrderId String? @map("gateway_order_id") @db.VarChar(191)
+  gatewayTransactionId String? @map("gateway_transaction_id") @db.VarChar(191)
+
+  outcome ReconciliationEvidenceOutcome
+
+  payloadSha256 String @map("payload_sha256") @db.Char(64)
+
+  assessment ReconciliationEvidenceAssessment @default(NOT_ASSESSED)
+  assessmentReason String? @map("assessment_reason") @db.VarChar(191)
+
+  authenticationStatus ReconciliationAuthenticationStatus @default(UNVERIFIED) @map("authentication_status")
+  authenticatedAt DateTime? @map("authenticated_at") @db.DateTime(3)
+
+  payment PlatformPaymentTransaction @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  webhookEvent PaymentWebhookEvent? @relation(fields: [webhookEventId], references: [id], onDelete: Restrict)
+
+  @@unique([gateway, source, sourceReference], map: "uq_recon_source_reference")
+  @@index([paymentId, receivedAt], map: "idx_recon_payment_received")
+  @@index([authenticationStatus, receivedAt], map: "idx_recon_auth_received")
+  @@index([webhookEventId], map: "idx_recon_webhook")
+  @@map("payment_reconciliation_evidence")
+}

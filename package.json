@@ -4,10 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "test:reconciliation-review": "node server/tests/run-reconciliation-review-security.cjs",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/src/index.ts",
-    "dev:client": "npm --prefix client run dev"
+    "dev:client": "npm --prefix client run dev",
+    "prisma:skills:sync": "prisma skills sync"
   },
   "keywords": [],
   "author": "",
@@ -16,14 +18,17 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/express-mysql-session": "^3.0.8",
     "@types/express-session": "^1.19.0",
     "@types/node": "^26.6.5",
     "@types/react": "~19.3.0",
     "concurrently": "^10.0.6",
+    "prisma": "7.10.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@prisma/client": "7.10.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",
@@ -37,5 +42,10 @@
     "react-dom": "^19.3.1",
     "react-native-web": "^0.21.4",
     "zod": "^4.6.7"
+  },
+  "overrides": {
+    "@types/express-mysql-session": {
+      "mysql2": "$mysql2"
+    }
   }
 }

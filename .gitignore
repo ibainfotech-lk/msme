@@ -7,3 +7,18 @@ client/dist/
 !.env.example
 # Expo
 .expo/
+# BEGIN NOTETO LOCAL SENSITIVE ARTIFACTS
+# Local credentials and unreviewed database artifacts
+/db pw.txt
+/database-backups/
+/database-seeds/
+/migration-review/
+
+# Local SQL drafts; official Prisma migrations remain trackable
+/_noteto_009_reconciliation_draft.sql
+/noteto_module1_preview.sql
+
+# Historical source and configuration backups
+*.bak
+*.backup
+# END NOTETO LOCAL SENSITIVE ARTIFACTS
