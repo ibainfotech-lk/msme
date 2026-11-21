@@ -47,3 +47,126 @@ jobs:
 
       - name: Test reconciliation security
         run: npm run test:reconciliation-review
+
+      - name: Test mock payment completion policy
+        run: npm run test:payment-completion-policy
+
+      - name: Test mock settlement transaction simulation
+        run: npm run test:mock-payment-settlement
+
+  mysql-activation-integration:
+    name: Disposable MySQL 8.4 settlement integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_fake_root_only
+          MYSQL_DATABASE: noteto_dev
+          MYSQL_USER: noteto_services
+          MYSQL_PASSWORD: ci_dummy_unused_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pci_fake_root_only"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      NODE_ENV: development
+      DB_HOST: "127.0.0.1"
+      DB_PORT: "3307"
+      DB_NAME: "noteto_dev"
+      DB_USER: "noteto_services"
+      DB_PASSWORD: "ci_dummy_unused_password"
+      MIGRATION_DB_USER: "noteto_services"
+      MIGRATION_DB_PASSWORD: "ci_dummy_unused_password"
+      NOTETO_CI_DISPOSABLE_DB: "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE"
+      SESSION_SECRET: "noteto-ci-ephemeral-session-secret-for-testing-only"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply migrations only to the disposable CI MySQL service
+        run: npx --no-install prisma migrate deploy
+
+      - name: Mark disposable CI MySQL service for integration-test guard
+        run: |
+          node <<'NODE'
+          const mysql = require("mysql2/promise");
+          async function run() {
+            if (
+              process.env.GITHUB_ACTIONS !== "true" ||
+              process.env.RUNNER_OS !== "Linux" ||
+              process.env.GITHUB_REPOSITORY !== "ibainfotech-lk/msme" ||
+              process.env.NOTETO_CI_DISPOSABLE_DB !==
+                "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE"
+            ) throw new Error("STOP: Not an authorized disposable CI environment");
+            const connection = await mysql.createConnection({
+              host: "127.0.0.1",
+              port: 3307,
+              user: "noteto_services",
+              password: "ci_dummy_unused_password",
+              database: "noteto_dev",
+            });
+            try {
+              await connection.execute(
+                "CREATE TABLE _noteto_ci_ephemeral_guard (" +
+                "token VARCHAR(80) PRIMARY KEY)"
+              );
+              await connection.execute(
+                "INSERT INTO _noteto_ci_ephemeral_guard (token) VALUES (?)",
+                ["ONLY_THE_EPHEMERAL_MYSQL84_SERVICE"]
+              );
+              console.log("PASSED: Disposable CI marker created");
+            } finally {
+              await connection.end();
+            }
+          }
+          run().catch(error => { console.error(error); process.exitCode = 1; });
+          NODE
+
+      - name: Verify real MySQL settlement and rollback behavior
+        run: npm run test:mysql-payment-settlement
+
+      - name: Verify OTP-gated registration checkout against disposable MySQL
+        run: npm run test:mysql-registration-checkout
+
+  client-build:
+    name: React client TypeScript build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci --prefix client --no-audit --no-fund
+
+      - name: Build React client
+        run: npm run build --prefix client

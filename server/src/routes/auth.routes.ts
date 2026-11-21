@@ -8,12 +8,9 @@ import {
     verifyOtpChallenge,
 } from "../services/otp.service";
 
-import {
-    registerBusinessOwner,
-    PhoneAlreadyRegisteredError,
-    type RegistrationType,
-    type PreferredLanguage,
-} from "../services/registration.service";
+import type { PreferredLanguage } from "../services/registration.service";
+import { requireCheckoutOrigin } from "../middleware/checkout-origin.middleware";
+import { registerCheckoutController } from "../modules/checkout/registration-checkout.controller";
 
 const router = Router();
 
@@ -37,34 +34,6 @@ function readPhone(body: unknown): string {
     return typeof value === "string"
         ? value.trim()
         : "";
-}
-
-function mapRegistrationType(
-    value: unknown
-): RegistrationType | null {
-    switch (value) {
-        case "sole_proprietor":
-            return "SOLE_PROPRIETOR";
-
-        case "private_limited_company":
-            return "PRIVATE_LIMITED";
-
-        case "community_organization":
-            return "COMMUNITY_ORGANIZATION";
-
-        default:
-            return null;
-    }
-}
-
-function isPreferredLanguage(
-    value: unknown
-): value is PreferredLanguage {
-    return (
-        value === "en" ||
-        value === "ta" ||
-        value === "si"
-    );
 }
 
 function regenerateSession(
@@ -213,6 +182,7 @@ router.post("/verify-otp", async (req, res) => {
         }
 
         req.session.verifiedPhone = phone;
+        req.session.verifiedPhoneAt = Date.now();
         await saveSession(req);
 
         return res.json({
@@ -230,142 +200,22 @@ router.post("/verify-otp", async (req, res) => {
     }
 });
 
-// POST /api/auth/register
-router.post("/register", async (req, res) => {
-    // Temporary local-development registration.
-    // Production onboarding will use payment-first activation.
-    if (process.env.NODE_ENV === "production") {
-        return res.status(403).json({
-            success: false,
-            message: "Registration is not available through this endpoint.",
-        });
-    }
+// Development-only verified OTP → pending owner/business → atomic checkout.
+// Origin check is required because this route consumes a session cookie.
+router.post(
+    "/register-checkout",
+    requireCheckoutOrigin,
+    registerCheckoutController
+);
 
-    const phone = req.session.verifiedPhone;
-
-    if (!phone || !isValidPhone(phone)) {
-        return res.status(401).json({
-            success: false,
-            message: "Phone verification is required.",
-        });
-    }
-
-    const fullName =
-        typeof req.body?.full_name === "string"
-            ? req.body.full_name.trim()
-            : "";
-
-    const businessName =
-        typeof req.body?.business_name === "string"
-            ? req.body.business_name.trim()
-            : "";
-
-    const registrationType = mapRegistrationType(
-        req.body?.business_type
-    );
-
-    const language = req.body?.preferred_language;
-
-    if (
-        !fullName ||
-        fullName.length > 150 ||
-        !businessName ||
-        businessName.length > 150 ||
-        !registrationType ||
-        !isPreferredLanguage(language)
-    ) {
-        return res.status(400).json({
-            success: false,
-            message: "Please complete all required fields.",
-        });
-    }
-
-    try {
-        const created = await registerBusinessOwner({
-            phone,
-            fullName,
-            businessName,
-            registrationType,
-            preferredLanguage: language,
-        });
-
-        try {
-            // Rotate session ID before authenticating a new owner.
-            await regenerateSession(req);
-
-            req.session.userId = created.userId;
-            req.session.verifiedPhone = undefined;
-
-            await saveSession(req);
-        } catch (sessionError) {
-            // Registration has already committed.
-            // Do not tell the client that account creation failed.
-            console.error(
-                "[REGISTER] Account created but login session failed:",
-                sessionError
-            );
-
-            // Best-effort cleanup of a partially established session.
-            try {
-                if (req.session) {
-                    req.session.userId = undefined;
-                    req.session.verifiedPhone = undefined;
-
-                    await new Promise<void>((resolve, reject) => {
-                        req.session.destroy((error) => {
-                            if (error) reject(error);
-                            else resolve();
-                        });
-                    });
-                }
-            } catch (cleanupError) {
-                console.error(
-                    "[REGISTER] Session cleanup failed:",
-                    cleanupError
-                );
-            }
-
-            res.clearCookie("noteto.sid", { path: "/" });
-
-            return res.status(503).json({
-                success: false,
-                code: "ACCOUNT_CREATED_LOGIN_REQUIRED",
-                message:
-                    "Your account was created, but sign-in could not be completed. Please request a new OTP and sign in. Do not register again."
-            });
-        }
-
-        return res.status(201).json({
-            success: true,
-            message: "Development account created successfully.",
-            user: {
-                id: created.userId,
-                full_name: fullName,
-                phone_number: phone,
-                preferred_language: language,
-            },
-            business: {
-                id: created.businessId,
-                business_name: businessName,
-                business_type: registrationType,
-                status: "PENDING",
-            },
-        });
-    } catch (error) {
-        if (error instanceof PhoneAlreadyRegisteredError) {
-            return res.status(409).json({
-                success: false,
-                message: error.message,
-            });
-        }
-
-        console.error("[REGISTER] Failed:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Unable to create account.",
-        });
-    }
+// Legacy registration without a selected plan has been retired.
+// No alternative may bypass the payment-first checkout journey.
+router.post("/register", (_req, res) => {
+    res.status(410).json({
+        success: false,
+        code: "PAYMENT_FIRST_REGISTRATION_REQUIRED",
+        message: "Select a plan and use verified-OTP registration checkout."
+    });
 });
 
 // POST /api/auth/logout
