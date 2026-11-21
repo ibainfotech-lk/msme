@@ -7,11 +7,38 @@ import { getTranslations, type Language } from "./locales";
 
 type Screen =
   | "language"
+  | "plan"
+  | "checkout"
   | "phone"
   | "login"
   | "otp"
   | "register"
   | "dashboard";
+interface PaidPlan {
+  id: string;
+  code: string;
+  name: string;
+  price_lkr: string;
+  billing_interval: "MONTHLY" | "YEARLY";
+  invoice_limit: number;
+  trial_days: number;
+}
+
+interface PendingCheckout {
+  id: string;
+  plan_code: string;
+  amount_lkr: string;
+  status: string;
+  expires_at: string | null;
+}
+
+interface MemberBusiness {
+  id: string;
+  name: string;
+  status: string;
+  current_subscription_id: string | null;
+}
+
 type TransactionType = "income" | "expense";
 type BusinessType =
   | "sole_proprietor"
@@ -49,6 +76,12 @@ export default function App() {
   });
 
   const [screen, setScreen] = useState<Screen>("language");
+  const [plans, setPlans] = useState<PaidPlan[]>([]);
+  const [selectedPlanCode, setSelectedPlanCode] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [pendingCheckout, setPendingCheckout] = useState<PendingCheckout | null>(null);
+  const [selectedBusiness, setSelectedBusiness] = useState<MemberBusiness | null>(null);
+  const [registrationKey, setRegistrationKey] = useState(() => "register_" + crypto.randomUUID());
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [fullName, setFullName] = useState("");
@@ -86,12 +119,13 @@ export default function App() {
   }
 
 
-  async function apiPost(path: string, body: unknown) {
+  async function apiPost(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
     const response = await fetch(path, {
       method: "POST",
       credentials: "include",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...extraHeaders
       },
       body: JSON.stringify(body)
     });
@@ -142,7 +176,7 @@ export default function App() {
     return data;
   }
 
-  async function continueToPhone() {
+  async function openPlans() {
     if (!language) {
       setMessage(t.required);
       return;
@@ -152,19 +186,14 @@ export default function App() {
     setMessage("");
 
     try {
-      // Development-only OTP bypass.
-      /*  const data = await apiPost(
-         "/api/auth/dev-continue-registration",
-         { phone_number: phone.trim() }
-       ); */
-      ///replace with above code
-      await apiPost("/api/auth/dev-continue-registration", {
-        phone_number: phone.trim(),
-      });
-      /////////////////////////////////////////////////////////////////////
-
-      setMessage("");
-      setScreen("register");
+      const response = await apiGet("/api/subscriptions/plans");
+      const available = (Array.isArray(response.data) ? response.data : []) as PaidPlan[];
+      setPlans(available.filter(plan =>
+        plan.billing_interval === "MONTHLY" &&
+        plan.trial_days === 0 &&
+        Number(plan.price_lkr) > 0
+      ));
+      setScreen("plan");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.genericError);
     } finally {
@@ -212,12 +241,29 @@ export default function App() {
       });
 
       if (data.registration_required) {
-        setScreen("register");
-        setMessage("");
+        setPhoneVerified(true);
+        if (!selectedPlanCode) {
+          await openPlans();
+        } else {
+          setScreen("register");
+          setMessage("");
+        }
       } else {
         setCurrentUser(data.user?.full_name || phone);
-        setScreen("dashboard");
-        await loadDashboard();
+        const businesses = await apiGet("/api/business/mine");
+        const list = (Array.isArray(businesses.data) ? businesses.data : []) as MemberBusiness[];
+        const active = list.find(b =>
+          b.status === "ACTIVE" && b.current_subscription_id !== null
+        );
+        const selected = active ?? list.find(b => b.status === "PENDING") ?? null;
+        setSelectedBusiness(selected);
+        setPendingCheckout(null);
+        setScreen(active ? "dashboard" : "checkout");
+        if (!active) {
+          setMessage(selected
+            ? "Your business is pending payment confirmation. Bank checkout is not yet available in private testing."
+            : "No active business is linked to this account.");
+        }
       }
 
     } catch (error) {
@@ -240,7 +286,7 @@ export default function App() {
   }
 
   async function register() {
-    if (!fullName.trim() || !businessName.trim() || !language) {
+    if (!fullName.trim() || !businessName.trim() || !language || !selectedPlanCode) {
       setMessage(t.required);
       return;
     }
@@ -249,17 +295,27 @@ export default function App() {
     setMessage("");
 
     try {
-      const data = await apiPost("/api/auth/register", {
+      const data = await apiPost("/api/auth/register-checkout", {
         full_name: fullName.trim(),
         business_name: businessName.trim(),
         business_type: businessType,
         preferred_language: language,
+        plan_code: selectedPlanCode,
+      }, {
+        "Idempotency-Key": registrationKey
       });
 
       setCurrentUser(data.user?.full_name || fullName.trim());
-      setScreen("dashboard");
-      setFormType(null);
-      await loadDashboard();
+      setPendingCheckout(data.checkout as PendingCheckout);
+      setSelectedBusiness({
+        id: data.business.id,
+        name: businessName.trim(),
+        status: "PENDING",
+        current_subscription_id: null
+      });
+      setScreen("checkout");
+      setMessage("Your account is created but not activated. Payment verification must complete before bookkeeping access.");
+      setRegistrationKey("register_" + crypto.randomUUID());
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.genericError);
     } finally {
@@ -360,6 +416,11 @@ export default function App() {
 
     setPhone("");
     setOtp("");
+    setSelectedPlanCode(null);
+    setPhoneVerified(false);
+    setPendingCheckout(null);
+    setSelectedBusiness(null);
+    setRegistrationKey("register_" + crypto.randomUUID());
     setFullName("");
     setBusinessName("");
     setCurrentUser("");
@@ -495,10 +556,7 @@ export default function App() {
             </div>
 
             <button className="primary-button" disabled={!language || loading}
-              onClick={() => {
-                setMessage("");
-                setScreen("phone");
-              }}
+              onClick={() => void openPlans()}
             >
               {t.register}
             </button>
@@ -518,6 +576,41 @@ export default function App() {
             </button>
 
 
+          </>
+        )}
+
+        {screen === "plan" && (
+          <>
+            <h2 className="screen-title">Choose your Noteto plan</h2>
+            <p>Pricing is shown before registration. Only paid, non-trial plans can currently be tested.</p>
+            {plans.length === 0 ? (
+              <p>No eligible paid plans are configured yet. Registration is unavailable.</p>
+            ) : (
+              <div className="language-list">
+                {plans.map(plan => (
+                  <button
+                    key={plan.id}
+                    type="button"
+                    className="language-option"
+                    disabled={loading}
+                    onClick={() => {
+                      setSelectedPlanCode(plan.code);
+                      setScreen(phoneVerified ? "register" : "phone");
+                      setMessage("");
+                    }}
+                  >
+                    <span className="language-name">{plan.name}</span>
+                    <span className="language-subtitle">
+                      {money(plan.price_lkr)} / month · {plan.invoice_limit} invoices
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <p>Free-trial promotions and real payments are not enabled in this development flow.</p>
+            <button className="text-button" type="button" onClick={() => setScreen("language")}>
+              {t.back}
+            </button>
           </>
         )}
 
@@ -541,24 +634,16 @@ export default function App() {
             <button
               className="primary-button"
               disabled={loading}
-              onClick={continueToPhone}
+              onClick={requestOtp}
             >
               {loading ? t.loading : t.sendOtp}
             </button>
 
             <button
               className="text-button"
-              onClick={() => setScreen("language")}
+              onClick={() => setScreen("plan")}
             >
               {t.back}
-            </button>
-
-            <button
-              className="text-button"
-              disabled={loading}
-              onClick={requestOtp}
-            >
-              Use OTP verification instead
             </button>
           </>
         )}
@@ -588,32 +673,7 @@ export default function App() {
               type="button"
               className="primary-button"
               disabled={loading}
-              onClick={async () => {
-                if (!phone.trim()) {
-                  setMessage("Enter your mobile number.");
-                  return;
-                }
-
-                setLoading(true);
-                setMessage("");
-
-                try {
-                  const data = await apiPost("/api/auth/dev-login", {
-                    phone_number: phone.trim(),
-                  });
-
-                  setCurrentUser(data.user?.full_name || phone.trim());
-                  setScreen("dashboard");
-                } catch (error) {
-                  setMessage(
-                    error instanceof Error
-                      ? error.message
-                      : "Login failed. Please try again."
-                  );
-                } finally {
-                  setLoading(false);
-                }
-              }}
+              onClick={requestOtp}
             >
               {loading ? "Please wait..." : t.login}
             </button>
@@ -774,6 +834,29 @@ export default function App() {
 
 
 
+          </>
+        )}
+
+        {screen === "checkout" && (
+          <>
+            <h2 className="screen-title">Business activation pending</h2>
+            <p className="phone-display">{selectedBusiness?.name ?? currentUser}</p>
+            <p>Your account is not yet activated. Please do not record business transactions until payment is verified.</p>
+            {pendingCheckout && (
+              <>
+                <p>Plan: <strong>{pendingCheckout.plan_code}</strong></p>
+                <p>Checkout amount: <strong>{money(pendingCheckout.amount_lkr)}</strong></p>
+                <p>Status: <strong>{pendingCheckout.status}</strong></p>
+              </>
+            )}
+            <p>Bank payment checkout and free-trial redemption are not available in this private-testing build. No payment has been collected.</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void logout()}
+            >
+              {t.logout}
+            </button>
           </>
         )}
 
