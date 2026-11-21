@@ -331,7 +331,6 @@ test("HTTP endpoint requires matching Origin and recent verified-OTP session", a
     await new Promise<void>((resolve, reject) => {
       server.close(error => error ? reject(error) : resolve());
     });
-    stored.close();
   }
 });
 
