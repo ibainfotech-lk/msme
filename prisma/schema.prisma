@@ -291,6 +291,10 @@ model BusinessSubscription {
   entitlements SubscriptionEntitlement[]
   events       SubscriptionEvent[]
 
+  // One verified platform payment may activate at most one subscription.
+  activationPaymentId String? @unique @map("activation_payment_id") @db.Char(36)
+  activationPayment PlatformPaymentTransaction? @relation("SubscriptionActivationPayment", fields: [activationPaymentId], references: [id], onDelete: Restrict)
+
   @@unique([businessId, id])
   @@index([businessId, status])
   @@index([status, currentPeriodEnd])
@@ -358,6 +362,7 @@ model PlatformPaymentTransaction {
   checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict)
 
   reconciliationEvidence PaymentReconciliationEvidence[]
+  activationSubscription BusinessSubscription? @relation("SubscriptionActivationPayment")
 
   @@unique([gateway, gatewayTransactionId])
   @@unique([gateway, gatewayOrderId], map: "uq_payment_gateway_order")

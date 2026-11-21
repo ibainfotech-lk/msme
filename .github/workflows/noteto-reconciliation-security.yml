@@ -50,3 +50,6 @@ jobs:
 
       - name: Test mock payment completion policy
         run: npm run test:payment-completion-policy
+
+      - name: Test mock settlement transaction simulation
+        run: npm run test:mock-payment-settlement
