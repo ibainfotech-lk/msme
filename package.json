@@ -9,7 +9,8 @@
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/src/index.ts",
     "dev:client": "npm --prefix client run dev",
-    "prisma:skills:sync": "prisma skills sync"
+    "prisma:skills:sync": "prisma skills sync",
+    "test:payment-completion-policy": "node --import tsx --test server/tests/payment-completion.policy.test.ts"
   },
   "keywords": [],
   "author": "",

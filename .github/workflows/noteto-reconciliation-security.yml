@@ -47,3 +47,6 @@ jobs:
 
       - name: Test reconciliation security
         run: npm run test:reconciliation-review
+
+      - name: Test mock payment completion policy
+        run: npm run test:payment-completion-policy
