@@ -29,6 +29,8 @@ const ta: {
     // Registration
     registerTitle: "உங்கள் கணக்கை உருவாக்கவும்",
     fullName: "முழுப் பெயர்",
+    emailLabel: "மின்னஞ்சல் முகவரி",
+    invalidEmail: "செல்லுபடியாகும் மின்னஞ்சல் முகவரியை உள்ளிடவும்.",
     businessName: "வணிகத்தின் பெயர்",
     businessType: "வணிக வகை",
     sole: "தனிநபர் வணிகம்",

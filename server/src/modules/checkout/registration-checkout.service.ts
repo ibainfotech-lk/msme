@@ -3,6 +3,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/prom
 import pool from "../../config/database";
 import type { PreferredLanguage, RegistrationType } from "../../services/registration.service";
 import { insertCheckoutOrder } from "../checkout/checkout.repository";
+import { registrationCheckoutEmailSchema } from "./registration-checkout.schema";
 
 /**
  * Development-only, verified-OTP prepayment registration.
@@ -24,6 +25,7 @@ export class RegistrationCheckoutError extends Error {
 export interface RegistrationCheckoutInput {
   phone: string;
   fullName: string;
+  email: string;
   businessName: string;
   registrationType: RegistrationType;
   preferredLanguage: PreferredLanguage;
@@ -80,6 +82,16 @@ export async function createRegistrationCheckout(
       "Prepayment registration is not available in this environment."
     );
   }
+
+  // Defensive validation for internal service callers as well as HTTP requests.
+  // An email address is contact information, not verified proof of business identity.
+  const parsedEmail = registrationCheckoutEmailSchema.safeParse(input.email);
+  if (!parsedEmail.success) {
+    throw new RegistrationCheckoutError(
+      400, "INVALID_REGISTRATION_EMAIL", "Enter a valid email address."
+    );
+  }
+  const normalizedEmail = parsedEmail.data;
 
   const connection = await getConnection();
   let started = false;
@@ -143,10 +155,10 @@ export async function createRegistrationCheckout(
     await connection.execute(
       [
         "INSERT INTO users",
-        "(id, phone, full_name, preferred_language, phone_verified_at, status, updated_at)",
-        "VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3), 'ACTIVE', UTC_TIMESTAMP(3))",
+        "(id, phone, email, full_name, preferred_language, phone_verified_at, status, updated_at)",
+        "VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(3), 'ACTIVE', UTC_TIMESTAMP(3))",
       ].join(" "),
-      [userId, input.phone, input.fullName, input.preferredLanguage]
+      [userId, input.phone, normalizedEmail, input.fullName, input.preferredLanguage]
     );
 
     await connection.execute(

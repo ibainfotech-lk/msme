@@ -69,6 +69,7 @@ export const registerCheckoutController: RequestHandler = async (req, res, next)
     const result = await createRegistrationCheckout({
       phone,
       fullName: body.data.full_name,
+      email: body.data.email,
       businessName: body.data.business_name,
       registrationType: {
         sole_proprietor: "SOLE_PROPRIETOR",

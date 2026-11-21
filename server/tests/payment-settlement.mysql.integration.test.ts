@@ -100,14 +100,14 @@ async function initializeDisposableSchema(): Promise<void> {
   const migrations = await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
   );
-  assert.equal(Number(migrations[0]?.n), 10);
+  assert.equal(Number(migrations[0]?.n), 11);
 
   const columns = await rows(
     "SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'business_subscriptions' AND column_name = 'activation_payment_id'"
   );
   assert.equal(Number(columns[0]?.n), 1);
 
-  console.log("PASSED: Isolated MySQL 8.4 service, disposable guard and 10 migrations verified.");
+  console.log("PASSED: Isolated MySQL 8.4 service, disposable guard and 11 migrations verified.");
 }
 
 before(async () => {

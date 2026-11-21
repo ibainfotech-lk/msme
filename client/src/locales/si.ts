@@ -29,6 +29,8 @@ const si: {
     // Registration
     registerTitle: "ඔබගේ ගිණුම සාදන්න",
     fullName: "සම්පූර්ණ නම",
+    emailLabel: "විද්‍යුත් තැපැල් ලිපිනය",
+    invalidEmail: "වලංගු විද්‍යුත් තැපැල් ලිපිනයක් ඇතුළත් කරන්න.",
     businessName: "ව්‍යාපාරයේ නම",
     businessType: "ව්‍යාපාර වර්ගය",
     sole: "තනි පුද්ගල ව්‍යාපාරය",

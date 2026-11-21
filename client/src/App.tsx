@@ -85,6 +85,7 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] =
     useState<BusinessType>("sole_proprietor");
@@ -286,8 +287,14 @@ export default function App() {
   }
 
   async function register() {
-    if (!fullName.trim() || !businessName.trim() || !language || !selectedPlanCode) {
+    if (!fullName.trim() || !email.trim() || !businessName.trim() || !language || !selectedPlanCode) {
       setMessage(t.required);
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length > 191 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setMessage(t.invalidEmail);
       return;
     }
 
@@ -297,6 +304,7 @@ export default function App() {
     try {
       const data = await apiPost("/api/auth/register-checkout", {
         full_name: fullName.trim(),
+        email: normalizedEmail,
         business_name: businessName.trim(),
         business_type: businessType,
         preferred_language: language,
@@ -422,6 +430,7 @@ export default function App() {
     setSelectedBusiness(null);
     setRegistrationKey("register_" + crypto.randomUUID());
     setFullName("");
+    setEmail("");
     setBusinessName("");
     setCurrentUser("");
     setTransactions([]);
@@ -770,6 +779,22 @@ export default function App() {
               maxLength={150}
               value={fullName}
               onChange={(event) => setFullName(event.target.value)}
+            />
+
+            <label className="field-label" htmlFor="registrationEmail">
+              {t.emailLabel} *
+            </label>
+            <input
+              id="registrationEmail"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              maxLength={191}
+              required
+              aria-required="true"
+              placeholder="owner@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
             />
 
             <label className="field-label" htmlFor="businessName">

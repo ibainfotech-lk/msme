@@ -54,6 +54,9 @@ jobs:
       - name: Test mock settlement transaction simulation
         run: npm run test:mock-payment-settlement
 
+      - name: Verify F.16.5 policy tests
+        run: node --import tsx --test server/tests/trial-promotion.policy.test.ts server/tests/checkout-recovery.policy.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
@@ -146,6 +149,9 @@ jobs:
 
       - name: Verify OTP-gated registration checkout against disposable MySQL
         run: npm run test:mysql-registration-checkout
+
+      - name: Verify guarded trial reservations against disposable MySQL
+        run: npm run test:mysql-trial-reservation
 
   client-build:
     name: React client TypeScript build

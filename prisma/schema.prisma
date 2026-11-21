@@ -7,6 +7,45 @@ datasource db {
   provider = "mysql"
 }
 
+enum IntroductoryTrialGrantStatus {
+  RESERVED
+  ACTIVATED
+}
+
+// Trusted identity evidence is created only by a verified administrative process.
+// No browser input alone should create rows here.
+model VerifiedBusinessIdentity {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @unique(map: "uq_verified_identity_business") @map("business_id") @db.Char(36)
+  identityFingerprint String @map("identity_fingerprint") @db.Char(64)
+  verificationMethod String @map("verification_method") @db.VarChar(50)
+  evidenceReferenceSha256 String @map("evidence_reference_sha256") @db.Char(64)
+  verifiedAt DateTime @map("verified_at") @db.DateTime(3)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_verified_identity_business")
+  @@index([identityFingerprint], map: "idx_verified_identity_fingerprint")
+  @@map("verified_business_identities")
+}
+
+// Reservation is intentionally not an activated subscription or a payment.
+model IntroductoryTrialGrant {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @unique(map: "uq_intro_trial_business") @map("business_id") @db.Char(36)
+  identityFingerprint String @unique(map: "uq_intro_trial_identity") @map("identity_fingerprint") @db.Char(64)
+  checkoutOrderId String @unique(map: "uq_intro_trial_checkout") @map("checkout_order_id") @db.Char(36)
+  status IntroductoryTrialGrantStatus @default(RESERVED)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  activatedAt DateTime? @map("activated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_intro_trial_business")
+  checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_intro_trial_checkout_tenant")
+  @@unique([businessId, checkoutOrderId], map: "uq_intro_trial_checkout_tenant")
+  @@index([status, createdAt], map: "idx_intro_trial_status_created")
+  @@map("introductory_trial_grants")
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -145,6 +184,8 @@ model Business {
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
   promotionRedemptions PromotionRedemption[]
+  verifiedIdentity VerifiedBusinessIdentity?
+  introductoryTrialGrant IntroductoryTrialGrant?
   currentSubscription  BusinessSubscription?        @relation("CurrentBusinessSubscription", fields: [id, currentSubscriptionId], references: [businessId, id], onDelete: Restrict)
 
   @@unique([id, currentSubscriptionId])
@@ -326,6 +367,7 @@ model CheckoutOrder {
   plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
 
   payments PlatformPaymentTransaction[]
+  introductoryTrialGrant IntroductoryTrialGrant?
 
   @@unique([businessId, id])
   @@index([businessId, status])

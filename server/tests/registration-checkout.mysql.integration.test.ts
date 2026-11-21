@@ -110,6 +110,7 @@ function data(planCode: string): RegistrationCheckoutInput {
   return {
     phone: phone(),
     fullName: "CI Pending Owner",
+    email: "CI_" + randomUUID() + "@Example.TEST",
     businessName: "CI Pending MSME",
     registrationType: "SOLE_PROPRIETOR",
     preferredLanguage: "ta",
@@ -133,7 +134,7 @@ test("OTP-backed registration creates pending account and checkout atomically", 
   assert.equal(created.planCode, p.code);
   assert.equal(created.amountLkr, "499.00");
 
-  const user = await query("SELECT id FROM users WHERE id = ?", [created.userId]);
+  const user = await query("SELECT id, email FROM users WHERE id = ?", [created.userId]);
   const business = await query(
     "SELECT status, current_subscription_id FROM businesses WHERE id = ?", [created.businessId]
   );
@@ -153,12 +154,26 @@ test("OTP-backed registration creates pending account and checkout atomically", 
     [created.checkoutOrderId, created.businessId]
   );
   assert.equal(user.length, 1);
+  assert.equal(user[0].email, input.email.toLowerCase());
   assert.equal(business[0].status, "PENDING");
   assert.equal(business[0].current_subscription_id, null);
   assert.equal(Number(owner[0]?.n), 1);
   assert.equal(Number(granted[0]?.n), 12);
   assert.equal(checkout[0].status, "PENDING");
   assert.equal(checkout[0].amount_lkr, "499.00");
+});
+
+test("registration service rejects missing and malformed email before connecting", async () => {
+  const p = await plan();
+  for (const value of ["", "invalid-email", "name@", "name@example.com ".repeat(20)]) {
+    const input = { ...data(p.code), email: value };
+    await assert.rejects(
+      () => createRegistrationCheckout(input, async () => {
+        throw new Error("UNEXPECTED_DB_CONNECTION");
+      }),
+      hasCode("INVALID_REGISTRATION_EMAIL")
+    );
+  }
 });
 
 test("repeated idempotency key rejects a second user or business", async () => {
@@ -282,6 +297,7 @@ test("HTTP endpoint requires matching Origin and recent verified-OTP session", a
 
     const body = {
       full_name: "CI API Owner",
+      email: "CI_" + randomUUID() + "@Example.TEST",
       business_name: "CI API MSME",
       business_type: "sole_proprietor",
       preferred_language: "en",
@@ -309,6 +325,18 @@ test("HTTP endpoint requires matching Origin and recent verified-OTP session", a
       { "Idempotency-Key": "short" }
     );
     assert.equal(missingKey.status, 400);
+
+    const missingEmail = await send(
+      "/api/auth/register-checkout", { ...body, email: undefined }, minted.cookie!
+    );
+    assert.equal(missingEmail.status, 400);
+    assert.equal(missingEmail.body.code, "INVALID_REGISTRATION_CHECKOUT_REQUEST");
+
+    const invalidEmail = await send(
+      "/api/auth/register-checkout", { ...body, email: "not-an-email" }, minted.cookie!
+    );
+    assert.equal(invalidEmail.status, 400);
+    assert.equal(invalidEmail.body.code, "INVALID_REGISTRATION_CHECKOUT_REQUEST");
 
     const created = await send("/api/auth/register-checkout", body, minted.cookie!);
     assert.equal(created.status, 201);

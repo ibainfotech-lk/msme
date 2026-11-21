@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RowDataPacket } from "mysql2/promise";
+import type { RowDataPacket, PoolConnection } from "mysql2/promise";
 
 import {
     getCheckoutConnection,
@@ -19,6 +19,19 @@ export class CheckoutError extends Error {
     ) {
         super(message);
         this.name = "CheckoutError";
+    }
+}
+
+// A trial reservation cancels the unpaid registration checkout. Do not allow
+// a new checkout to bypass that cancellation while activation is pending.
+async function rejectReservedTrial(connection: PoolConnection, businessId: string): Promise<void> {
+    if (process.env.NOTETO_TRIAL_RESERVATIONS_ENABLED !== "true") return;
+    const [rows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id FROM introductory_trial_grants WHERE business_id = ? AND status = 'RESERVED' LIMIT 1",
+        [businessId]
+    );
+    if (rows.length !== 0) {
+        throw new CheckoutError(409, "TRIAL_RESERVATION_PENDING", "Complete trial verification before starting a new checkout.");
     }
 }
 
@@ -94,6 +107,8 @@ async function recoverDuplicateOrder(
                 "Business access is not permitted."
             );
         }
+
+        await rejectReservedTrial(connection, input.businessId);
 
         const [rows] = await connection.execute<AuthorizationRow[]>(
             `SELECT 1 AS authorized
@@ -188,6 +203,8 @@ export async function createCheckoutOrder(
                 "Checkout is unavailable for this business."
             );
         }
+
+        await rejectReservedTrial(connection, input.businessId);
 
         // Recheck authorization within the transaction.
         const [authorizationRows] =

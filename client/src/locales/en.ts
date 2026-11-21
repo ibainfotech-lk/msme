@@ -23,6 +23,8 @@ const en = {
     // User registration
     registerTitle: "Create your account",
     fullName: "Full name",
+    emailLabel: "Email address",
+    invalidEmail: "Enter a valid email address.",
     businessName: "Business name",
     businessType: "Business type",
     sole: "Sole proprietor",
