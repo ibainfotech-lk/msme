@@ -9,6 +9,7 @@ import session from "express-session";
 import mysql, { type RowDataPacket } from "mysql2/promise";
 
 import authRouter from "../src/routes/auth.routes";
+import runtimePool from "../src/config/database";
 import {
   createRegistrationCheckout,
   RegistrationCheckoutError,
@@ -40,7 +41,10 @@ const pool = mysql.createPool({
   connectionLimit: 5,
 });
 
-after(async () => pool.end());
+after(async () => {
+  await pool.end();
+  await runtimePool.end();
+});
 
 interface DbRow extends RowDataPacket {
   id?: string;
