@@ -167,6 +167,12 @@ export class MockPaymentSettlementService {
         [payment.id, input.businessId]
       );
 
+      const [pointers] = await connection.execute<SubscriptionPointerRow[]>(
+        "SELECT current_subscription_id FROM businesses WHERE id = ? LIMIT 1",
+        [input.businessId]
+      );
+      if (pointers.length !== 1) throw new MockSettlementError("BUSINESS_POINTER_MISSING");
+
       if (payment.status === "SUCCEEDED") {
         if (
           order.status !== "PAID" ||
@@ -175,7 +181,8 @@ export class MockPaymentSettlementService {
           payment.gateway_order_id !== order.gateway_order_id ||
           !payment.gateway_transaction_id ||
           !payment.verified_at ||
-          previous.length !== 1
+          previous.length !== 1 ||
+          pointers[0].current_subscription_id !== previous[0].id
         ) {
           throw new MockSettlementError("SETTLED_RECORDS_INCONSISTENT");
         }
@@ -201,12 +208,8 @@ export class MockPaymentSettlementService {
         throw new MockSettlementError(assessment.code);
       }
 
-      const [pointers] = await connection.execute<SubscriptionPointerRow[]>(
-        "SELECT current_subscription_id FROM businesses WHERE id = ? LIMIT 1",
-        [input.businessId]
-      );
 
-      if (pointers.length !== 1 || pointers[0].current_subscription_id !== null) {
+      if (pointers[0].current_subscription_id !== null) {
         throw new MockSettlementError("EXISTING_SUBSCRIPTION_REQUIRES_REVIEW");
       }
 
