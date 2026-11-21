@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth.middleware";
 import { requireBusinessAccess } from "../middleware/business-access.middleware";
 import { requirePermission } from "../middleware/permission.middleware";
+import pool from "../config/database";
 
 
 const router = Router();
@@ -32,7 +33,6 @@ router.get("/mine", requireAuth, async (req, res, next) => {
     }
 
     try {
-        const pool = (await import("../config/database")).default;
         const [rows] = await pool.execute<
             import("mysql2/promise").RowDataPacket[]
         >(
