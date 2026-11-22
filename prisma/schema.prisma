@@ -226,6 +226,59 @@ enum ArchivedReportType {
   YEARLY
 }
 
+enum CashTransactionType {
+  INCOME
+  EXPENSE
+}
+
+model CashTransaction {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  transactionType CashTransactionType @map("transaction_type")
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12,2)
+  category String @db.VarChar(100)
+  description String @default("") @db.VarChar(500)
+  occurredOn DateTime @map("occurred_on") @db.Date
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+  version Int @default(1) @db.UnsignedInt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_business")
+  createdBy User @relation("CashTransactionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_creator")
+  edits CashTransactionEditAudit[]
+
+  @@unique([businessId, id], map: "uq_cash_transaction_business_id")
+  @@index([businessId, occurredOn, transactionType], map: "idx_cash_transactions_business_date")
+  @@map("cash_transactions")
+}
+
+model CashTransactionEditAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  cashTransactionId String @map("cash_transaction_id") @db.Char(36)
+  editedByUserId String @map("edited_by_user_id") @db.Char(36)
+  priorVersion Int @map("prior_version") @db.UnsignedInt
+  newVersion Int @map("new_version") @db.UnsignedInt
+  oldAmountLkr Decimal @map("old_amount_lkr") @db.Decimal(12,2)
+  newAmountLkr Decimal @map("new_amount_lkr") @db.Decimal(12,2)
+  oldCategory String @map("old_category") @db.VarChar(100)
+  newCategory String @map("new_category") @db.VarChar(100)
+  oldDescription String @map("old_description") @db.VarChar(500)
+  newDescription String @map("new_description") @db.VarChar(500)
+  oldOccurredOn DateTime @map("old_occurred_on") @db.Date
+  newOccurredOn DateTime @map("new_occurred_on") @db.Date
+  reason String @db.VarChar(500)
+  editedAt DateTime @default(now()) @map("edited_at") @db.DateTime(3)
+
+  cashTransaction CashTransaction @relation(fields: [businessId, cashTransactionId], references: [businessId, id], onDelete: Restrict, map: "fk_cash_edit_transaction_tenant")
+  editedBy User @relation("CashTransactionEditor", fields: [editedByUserId], references: [id], onDelete: Restrict, map: "fk_cash_edit_actor")
+
+  @@unique([cashTransactionId, newVersion], map: "uq_cash_edit_revision")
+  @@index([businessId, editedAt], map: "idx_cash_edit_business_time")
+  @@map("cash_transaction_edit_audits")
+}
+
 model ArchivedReportSnapshot {
   id String @id @default(uuid()) @db.Char(36)
   businessId String @map("business_id") @db.Char(36)
@@ -286,6 +339,8 @@ model User {
   acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptor")
   legalAcceptances RegistrationLegalAcceptance[]
   generatedReportSnapshots ArchivedReportSnapshot[]
+  createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
+  editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
 
   @@map("users")
 }
@@ -307,6 +362,7 @@ model Business {
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
   archivedReportSnapshots ArchivedReportSnapshot[]
+  cashTransactions CashTransaction[]
   promotionRedemptions PromotionRedemption[]
   legalAcceptances RegistrationLegalAcceptance[]
   identityOfferClaims IdentityOfferClaim[]
