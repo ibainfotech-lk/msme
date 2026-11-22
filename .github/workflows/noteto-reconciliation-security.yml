@@ -165,6 +165,9 @@ jobs:
       - name: Verify monthly arrears schema and read-only quote against disposable MySQL
         run: npm run test:mysql-subscription-arrears
 
+      - name: Verify allocation of already verified monthly payments in disposable MySQL
+        run: npm run test:mysql-verified-due-allocation
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
