@@ -183,6 +183,9 @@ jobs:
       - name: Verify historical cash edit audit and hold isolation in disposable MySQL
         run: npm run test:mysql-historical-entry-edits
 
+      - name: Verify reviewed hold journal and no automatic state changes in disposable MySQL
+        run: npm run test:mysql-hold-review-journal
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
