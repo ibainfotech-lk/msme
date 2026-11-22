@@ -247,10 +247,28 @@ model CashTransaction {
   business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_business")
   createdBy User @relation("CashTransactionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_creator")
   edits CashTransactionEditAudit[]
+  createRequest CashTransactionCreateRequest?
 
   @@unique([businessId, id], map: "uq_cash_transaction_business_id")
   @@index([businessId, occurredOn, transactionType], map: "idx_cash_transactions_business_date")
   @@map("cash_transactions")
+}
+
+model CashTransactionCreateRequest {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  cashTransactionId String @unique(map: "uq_cash_create_transaction") @map("cash_transaction_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(100)
+  requestSha256 String @map("request_sha256") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  transaction CashTransaction @relation(fields: [businessId, cashTransactionId], references: [businessId, id], onDelete: Restrict, map: "fk_cash_create_tenant_transaction")
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_create_actor")
+
+  @@unique([businessId, idempotencyKey], map: "uq_cash_create_business_key")
+  @@index([createdByUserId, createdAt], map: "idx_cash_create_user_time")
+  @@map("cash_transaction_create_requests")
 }
 
 model CashTransactionEditAudit {
@@ -441,6 +459,7 @@ model User {
   generatedReportSnapshots ArchivedReportSnapshot[]
   createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
   editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
+  createdCashTransactionRequests CashTransactionCreateRequest[]
   businessProfileEdits BusinessProfileEditAudit[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
 
