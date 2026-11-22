@@ -2,6 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { getTranslations, type Language } from "./locales";
+import {
+  REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION,
+  REGISTRATION_TERMS_URL, REGISTRATION_PRIVACY_URL,
+} from "./legal/registration-legal";
 
 
 
@@ -86,6 +90,8 @@ export default function App() {
   const [otp, setOtp] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] =
     useState<BusinessType>("sole_proprietor");
@@ -292,6 +298,11 @@ export default function App() {
       return;
     }
 
+    if (!termsAccepted || !privacyAcknowledged) {
+      setMessage(t.legalRequired);
+      return;
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     if (normalizedEmail.length > 191 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       setMessage(t.invalidEmail);
@@ -309,6 +320,10 @@ export default function App() {
         business_type: businessType,
         preferred_language: language,
         plan_code: selectedPlanCode,
+        terms_accepted: termsAccepted,
+        privacy_acknowledged: privacyAcknowledged,
+        terms_version: REGISTRATION_TERMS_VERSION,
+        privacy_version: REGISTRATION_PRIVACY_VERSION,
       }, {
         "Idempotency-Key": registrationKey
       });
@@ -431,6 +446,8 @@ export default function App() {
     setRegistrationKey("register_" + crypto.randomUUID());
     setFullName("");
     setEmail("");
+    setTermsAccepted(false);
+    setPrivacyAcknowledged(false);
     setBusinessName("");
     setCurrentUser("");
     setTransactions([]);
@@ -822,9 +839,32 @@ export default function App() {
               <option value="community_organization">{t.community}</option>
             </select>
 
+            <section className="registration-legal" aria-labelledby="registration-legal-title">
+              <h3 id="registration-legal-title">{t.legalTitle}</h3>
+              <p>{t.legalDescription}</p>
+              <p className="legal-plan-summary">
+                {t.legalPlanLabel}: {plans.find(p => p.code === selectedPlanCode)?.name ?? selectedPlanCode}
+                {" — "}{money(plans.find(p => p.code === selectedPlanCode)?.price_lkr ?? 0)}
+              </p>
+              <p className="legal-doc-links">
+                <a href={REGISTRATION_TERMS_URL} target="_blank" rel="noopener noreferrer">{t.termsLink}</a>
+                {" · "}
+                <a href={REGISTRATION_PRIVACY_URL} target="_blank" rel="noopener noreferrer">{t.privacyLink}</a>
+              </p>
+              <label className="legal-check">
+                <input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} />
+                <span>{t.acceptTerms}</span>
+              </label>
+              <label className="legal-check">
+                <input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} />
+                <span>{t.acknowledgePrivacy}</span>
+              </label>
+              <p className="legal-review-warning">{t.legalDraftNotice}</p>
+            </section>
+
             <button
               className="primary-button"
-              disabled={loading}
+              disabled={loading || !termsAccepted || !privacyAcknowledged}
               onClick={register}
             >
               {loading ? t.loading : t.create}
