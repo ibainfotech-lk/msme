@@ -1,0 +1,40 @@
+/* Noteto F.17.1: private dev cashbook; clean and accessible. */
+.welcome-card:has(.core-cashbook) { max-width: 1040px; }
+.core-cashbook { display: grid; gap: 18px; color: #164d4a; }
+.cashbook-heading { background: #f0f8f5; border: 1px solid #c1d8ce; border-radius: 16px; padding: 20px; }
+.cashbook-heading h2 { margin: 0 0 8px; font-size: 25px; }
+.cashbook-heading p { margin: 9px 0 0; color: #3d6059; line-height: 1.6; }
+.cashbook-notice { font-size: 13px; line-height: 1.6; background: #fff9e9; padding: 12px; border-left: 4px solid #b8995a; border-radius: 8px; color: #705632; }
+.cashbook-form { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; border: 1px solid #d1e2db; border-radius: 14px; padding: 20px; background: #fff; }
+.cashbook-form h3 { grid-column: 1 / -1; margin: 0; }
+.cashbook-form label { display: grid; gap: 6px; min-width: 0; font-weight: 650; font-size: 14px; }
+.cashbook-form input:not([type="checkbox"]), .cashbook-form textarea {
+  width: 100%; padding: 11px 12px; min-width: 0; border: 1px solid #a9c6bd;
+  border-radius: 9px; background: #fff; color: #164d4a; font: inherit;
+}
+.cashbook-form textarea { min-height: 82px; resize: vertical; }
+.cashbook-type { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; }
+.cashbook-type button { border: 1px solid #4a7a74; color: #164d4a; border-radius: 10px; padding: 10px 16px; background: #fff; font-weight: 650; }
+.cashbook-type button.active { background: #164d4a; color: #fff; }
+.cashbook-form .cashbook-confirm { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px; line-height: 1.4; }
+.cashbook-confirm input { width: 18px; height: 18px; flex-shrink: 0; }
+.cashbook-form > button { width: auto; margin: 0; }
+.cashbook-form button:disabled { opacity: .55; }
+.cashbook-list { display: grid; gap: 10px; }
+.cashbook-list h3 { margin: 0 0 6px; }
+.cashbook-row { border: 1px solid #d2e0d9; background: #fff; border-radius: 12px; padding: 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cashbook-row p { margin: 4px 0; color: #66796f; font-size: 14px; overflow-wrap: anywhere; }
+.cashbook-row small { color: #647970; }
+.cashbook-row-action { display: grid; justify-items: end; gap: 8px; }
+.cashbook-row-action button { padding: 7px 12px; border: 1px solid #4a7a74; border-radius: 7px; background: #fff; color: #164d4a; font-weight: 650; }
+.cashbook-list > button { margin-top: 8px; width: fit-content; }
+.cashbook-error { background: #fff0eb; color: #952d21; border-radius: 8px; padding: 12px; overflow-wrap: anywhere; }
+.cashbook-success { background: #edf9f0; color: #236246; border-radius: 8px; padding: 12px; }
+.cashbook-footer { display: flex; align-items: center; gap: 12px; }
+.cashbook-footer button { width: auto; margin: 0; }
+@media(max-width:680px) {
+  .cashbook-form { grid-template-columns: 1fr; padding: 15px; }
+  .cashbook-type button { flex: 1; }
+  .cashbook-row-action { justify-items: start; }
+  .cashbook-footer { flex-wrap: wrap; }
+}
