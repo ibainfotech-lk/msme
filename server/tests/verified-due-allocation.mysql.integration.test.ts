@@ -186,6 +186,41 @@ test("a verified payment cannot overallocate beyond either due or payment total"
   ))[0]?.n), 0);
 });
 
+test("one verified payment cannot be spent twice across two different months", async () => {
+  const f = await fixture();
+  const novemberDueId = uid();
+  await db.execute(
+    ["INSERT INTO subscription_monthly_dues",
+     "(id, business_id, subscription_id, billing_month, due_at, charge_lkr, waived_lkr, status)",
+     "VALUES (?, ?, ?, '2026-11-01', '2026-11-01 00:00:00.000', 499.00, 0.00, 'OPEN')"].join(" "),
+    [novemberDueId, f.businessId, f.subscriptionId]
+  );
+  const october = await allocateVerifiedMonthlyPayment(input(f, "300.00"));
+  assert.equal(october.dueOutstandingLkr, "199.00");
+  await assert.rejects(() => allocateVerifiedMonthlyPayment({
+    ...input(f, "200.00"), monthlyDueId: novemberDueId,
+  }), code("ALLOCATION_EXCEEDS_VERIFIED_FUNDS"));
+  const november = await allocateVerifiedMonthlyPayment({
+    ...input(f, "199.00"), monthlyDueId: novemberDueId,
+  });
+  assert.equal(november.dueOutstandingLkr, "300.00");
+  const total = await rows(
+    "SELECT COALESCE(SUM(amount_lkr), 0.00) AS amount_lkr FROM subscription_due_allocations WHERE business_id = ? AND payment_id = ?",
+    [f.businessId, f.paymentId]
+  );
+  assert.equal(String(total[0]?.amount_lkr), "499.00");
+});
+
+test("a payment with unsettled checkout cannot be allocated", async () => {
+  const f = await fixture();
+  await db.execute(
+    "UPDATE checkout_orders SET status = 'PENDING' WHERE id = ?",
+    [f.checkoutOrderId]
+  );
+  await assert.rejects(() => allocateVerifiedMonthlyPayment(input(f)),
+    code("PAYMENT_VERIFICATION_REQUIRED"));
+});
+
 test("rejected payment statuses never count as verified allocations", async () => {
   for (const status of ["PENDING", "FAILED", "REFUNDED"] as const) {
     const f = await fixture("499.00", status);
