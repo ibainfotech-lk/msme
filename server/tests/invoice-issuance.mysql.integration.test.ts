@@ -10,7 +10,7 @@ import mysql,{type RowDataPacket} from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import invoiceRoutes from "../src/modules/invoices/invoice.routes";
 import {
-  issueInvoice,getInvoice,listInvoices,InvoiceIssueError,
+  issueInvoice,getInvoice,listInvoices,getInvoiceQuota,InvoiceIssueError,
   type IssueInvoiceInput,
 } from "../src/modules/invoices/invoice-issuance.service";
 
@@ -219,6 +219,22 @@ test("invoice history supports stable keyset pagination",async()=>{
   assert.equal(page2.items.length,1);
   assert.equal(new Set([...page1.items,...page2.items].map(x=>x.id)).size,3);
 });
+test("current-month quota lookup is authoritative, read-only, and tenant-authorized",async()=>{
+  const f=await fixture({invoiceLimit:2});
+  const before=await getInvoiceQuota({businessId:f.businessId,userId:f.userId});
+  assert.equal(before.quota.used,0);
+  assert.equal(before.quota.remaining,2);
+  await issueInvoice(input(f));
+  const afterOne=await getInvoiceQuota({businessId:f.businessId,userId:f.userId});
+  assert.equal(afterOne.quota.used,1);
+  assert.equal(afterOne.quota.remaining,1);
+  assert.equal(afterOne.quota.warningAt28,false);
+  const other=await fixture();
+  await assert.rejects(()=>getInvoiceQuota({businessId:f.businessId,userId:other.userId}),
+    err("INVOICE_PERMISSION_DENIED"));
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM cash_transactions WHERE business_id=?",
+    [f.businessId]))[0]?.n),0);
+});
 test("permission checks distinguish issue from reading",async()=>{
   const readonly=await fixture({permissions:["invoices.read"]});
   await assert.rejects(()=>issueInvoice(input(readonly)),err("INVOICE_PERMISSION_DENIED"));
@@ -328,6 +344,11 @@ test("HTTP routes require session, same-origin, strict JSON and deny deletion",a
     assert.equal(valid.status,201);
     const issued=await valid.json() as {invoice:{id:string}};
     assert.ok(issued.invoice.id);
+    const quotaResponse=await fetch(base+path+"/quota",{headers:{Cookie:cookie}});
+    assert.equal(quotaResponse.status,200);
+    const q=await quotaResponse.json() as {quota:{used:number;limit:number}};
+    assert.equal(q.quota.used,1);
+    assert.equal(q.quota.limit,30);
     const get=await fetch(base+path+"/"+issued.invoice.id,{headers:{Cookie:cookie}});
     assert.equal(get.status,200);
     const deletion=await fetch(base+path+"/"+issued.invoice.id,{
