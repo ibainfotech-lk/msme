@@ -8,6 +8,7 @@ import {
   previewMonthlySubscriptionArrears, ArrearsPreviewError,
 } from "../src/modules/subscriptions/subscription-arrears-preview.service";
 import { MonthlyArrearsError } from "../src/modules/subscriptions/subscription-arrears.policy";
+import { previewCheckoutRecovery, CheckoutRecoveryPreviewError } from "../src/modules/checkout/checkout-recovery-preview.service";
 
 /* DESTRUCTIVE TEST FIXTURES: ONLY disposable GitHub Actions MySQL 8.4. */
 const allowed =
@@ -26,6 +27,7 @@ if (!allowed) throw new Error("STOP: Disposable GitHub Actions MySQL 8.4 only.")
 
 process.env.NOTETO_ARREARS_PREVIEW_ENABLED = "true";
 process.env.NOTETO_ARREARS_HISTORY_READY = "true";
+process.env.NOTETO_CHECKOUT_RECOVERY_PREVIEW_ENABLED = "true";
 
 const db = mysql.createPool({
   host: "127.0.0.1", port: 3307, database: "noteto_dev",
@@ -237,4 +239,69 @@ test("incomplete history flag disables preview before opening DB", async () => {
     );
   } finally { process.env.NOTETO_ARREARS_HISTORY_READY = "true"; }
 });
-console.log("INFO: Monthly arrears preview is read-only and tested against disposable CI MySQL.");
+test("read-only recovery inspects paid order without another gateway operation", async () => {
+  const f = await fixture();
+  const quote = await previewCheckoutRecovery({
+    businessId: f.businessId, userId: f.userId, checkoutOrderId: f.checkoutOrderId,
+  });
+  assert.equal(quote.action, "VERIFY_SETTLEMENT");
+  assert.equal(quote.paymentActionAllowed, false);
+  assert.equal(quote.recordedPaymentAttempts, 0);
+});
+
+test("unpaid pending order may be resumed, but this preview never initiates payment", async () => {
+  const f = await fixture();
+  await db.execute(
+    "UPDATE checkout_orders SET status = 'PENDING', expires_at = '2030-01-01 00:00:00.000' WHERE id = ?",
+    [f.checkoutOrderId]
+  );
+  const quote = await previewCheckoutRecovery({
+    businessId: f.businessId, userId: f.userId, checkoutOrderId: f.checkoutOrderId,
+  });
+  assert.equal(quote.action, "RESUME_UNPAID_CHECKOUT");
+  assert.equal(quote.paymentActionAllowed, false);
+  const attempts = await rows(
+    "SELECT COUNT(*) AS n FROM platform_payment_transactions WHERE checkout_order_id = ?",
+    [f.checkoutOrderId]
+  );
+  assert.equal(Number(attempts[0]?.n), 0);
+});
+
+test("unknown initiation blocks duplicate recovery even with pending order", async () => {
+  const f = await fixture();
+  await db.execute(
+    "UPDATE checkout_orders SET status = 'PENDING', expires_at = '2030-01-01 00:00:00.000' WHERE id = ?",
+    [f.checkoutOrderId]
+  );
+  await db.execute(
+    ["INSERT INTO platform_payment_transactions",
+     "(id, business_id, checkout_order_id, idempotency_key, gateway, amount_lkr, status, initiation_status, updated_at)",
+     "VALUES (?, ?, ?, ?, 'CI_MOCK', 499.00, 'PENDING', 'UNKNOWN', UTC_TIMESTAMP(3))"].join(" "),
+    [uid(), f.businessId, f.checkoutOrderId, "ci_ar_unknown_" + uid()]
+  );
+  const quote = await previewCheckoutRecovery({
+    businessId: f.businessId, userId: f.userId, checkoutOrderId: f.checkoutOrderId,
+  });
+  assert.equal(quote.action, "RECONCILIATION_REQUIRED");
+  assert.equal(quote.recordedPaymentAttempts, 1);
+  assert.equal(quote.paymentActionAllowed, false);
+});
+
+test("production guard rejects checkout inspection before DB connection", async () => {
+  const f = await fixture();
+  try {
+    process.env.NODE_ENV = "production";
+    await assert.rejects(
+      () => previewCheckoutRecovery({
+        businessId: f.businessId, userId: f.userId, checkoutOrderId: f.checkoutOrderId,
+      }, async () => { throw Error("UNEXPECTED_CONNECTION"); }),
+      (error: unknown) => {
+        assert.ok(error instanceof CheckoutRecoveryPreviewError);
+        assert.equal(error.code, "CHECKOUT_RECOVERY_PREVIEW_DISABLED");
+        return true;
+      }
+    );
+  } finally { process.env.NODE_ENV = "development"; }
+});
+
+console.log("INFO: Monthly arrears and checkout recovery previews are read-only; disposable CI MySQL only.");
