@@ -16,7 +16,7 @@ interface ProfileData {
   businessId: string;
   businessLegalName: string;
   personalPhone: string;
-  personalVerifiedEmail: string | null;
+  registrationEmail: string | null;
   version: number;
   profile: ProfileFields;
 }
@@ -116,7 +116,10 @@ export default function HeldProfileEditor({ businessId, businessName, language }
         throw new Error("INVALID_PROFILE_RESPONSE");
       }
       setLoaded(response);
-      setDraft({ ...response.profile });
+      setDraft({
+        ...response.profile,
+        displayName: response.profile.displayName || response.businessLegalName,
+      });
     } catch {
       setLoaded(null);
       setDraft(null);
@@ -160,7 +163,7 @@ export default function HeldProfileEditor({ businessId, businessName, language }
         <form onSubmit={event => void save(event)} className="held-profile-form">
           <label>{t.legal}<input readOnly value={loaded.businessLegalName || businessName} /></label>
           <label>{t.phone}<input readOnly value={loaded.personalPhone} /></label>
-          <label>{t.registeredEmail}<input readOnly value={loaded.personalVerifiedEmail ?? ""}/></label>
+          <label>{t.registeredEmail}<input readOnly value={loaded.registrationEmail ?? ""}/></label>
           <label>{t.fullName}<input required minLength={2} maxLength={150}
             value={draft.fullName} onChange={event => setDraft({ ...draft, fullName: event.target.value })}/></label>
           <label>{t.language}
