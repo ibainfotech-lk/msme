@@ -157,10 +157,20 @@ test("tampered checksum fails integrity verification",async()=>{
   const f=await fixture({checksum:"0".repeat(64)});
   await assert.rejects(()=>loadPreviouslyGeneratedPdf(ref(f)),code("ARCHIVED_REPORT_INTEGRITY_FAILED"));
 });
-test("immutable archive cannot be updated or deleted",async()=>{
+test("download rejects changed archive bytes when the recorded checksum is unchanged",async()=>{
   const f=await fixture();
-  await assert.rejects(()=>db.execute("UPDATE archived_report_snapshots SET content_length=1 WHERE id = ?",[f.reportId]));
-  await assert.rejects(()=>db.execute("DELETE FROM archived_report_snapshots WHERE id = ?",[f.reportId]));
+  const tampered=Buffer.from(pdf);
+  tampered[tampered.length - 1] = tampered[tampered.length - 1] === 70 ? 71 : 70;
+  // CI's migration account has write access; SQL immutability is not
+  // guaranteed without a separately configured least-privilege account.
+  await db.execute(
+    "UPDATE archived_report_snapshots SET pdf_bytes = ? WHERE id = ?",
+    [tampered,f.reportId]
+  );
+  await assert.rejects(
+    ()=>loadPreviouslyGeneratedPdf(ref(f)),
+    code("ARCHIVED_REPORT_INTEGRITY_FAILED")
+  );
 });
 test("production guard rejects before contacting database",async()=>{
   const f=await fixture();
