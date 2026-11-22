@@ -101,16 +101,22 @@ export async function previewMonthlySubscriptionArrears(
 
     // Hold statements resolve the CURRENT subscription under the same
     // business lock; the browser cannot supply or switch its subscription ID.
+    const subscriptionSql: string = input.requireCurrentHold
+      ? [
+        "SELECT bs.id, bs.status, bs.starts_at, bs.held_at",
+        "FROM businesses b JOIN business_subscriptions bs",
+        "ON bs.id = b.current_subscription_id AND bs.business_id = b.id",
+        "WHERE b.id = ? FOR UPDATE",
+      ].join(" ")
+      : "SELECT id, status, starts_at, held_at FROM business_subscriptions WHERE id = ? AND business_id = ? FOR UPDATE";
+    // MySQL2 execute parameters must be a string array. Validation above
+    // rejects a missing subscriptionId in non-hold mode.
+    const subscriptionParams: string[] = input.requireCurrentHold
+      ? [input.businessId]
+      : [input.subscriptionId ?? "", input.businessId];
     const [subscriptions] = await connection.execute<SubscriptionRow[]>(
-      input.requireCurrentHold
-        ? [
-          "SELECT bs.id, bs.status, bs.starts_at, bs.held_at",
-          "FROM businesses b JOIN business_subscriptions bs",
-          "ON bs.id = b.current_subscription_id AND bs.business_id = b.id",
-          "WHERE b.id = ? FOR UPDATE",
-        ].join(" ")
-        : "SELECT id, status, starts_at, held_at FROM business_subscriptions WHERE id = ? AND business_id = ? FOR UPDATE",
-      input.requireCurrentHold ? [input.businessId] : [input.subscriptionId, input.businessId]
+      subscriptionSql,
+      subscriptionParams
     );
     const subscription = subscriptions[0];
     if (!subscription ||
