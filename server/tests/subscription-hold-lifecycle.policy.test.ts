@@ -87,7 +87,7 @@ test("incomplete or stale billing evidence never authorizes a hold", () => {
   code({ verifiedQuote: null }, "VERIFIED_BILLING_EVIDENCE_REQUIRED");
   code({ monthlyHistoryReviewed: false }, "VERIFIED_BILLING_EVIDENCE_REQUIRED");
   code({ verifiedPaymentHistoryReady: false }, "VERIFIED_BILLING_EVIDENCE_REQUIRED");
-  code({ verifiedQuote: { ...quote, asOf: new Date("2027-02-01Z").toISOString() } }, "BILLING_QUOTE_STALE_OR_INVALID");
+  code({ verifiedQuote: { ...quote, asOf: new Date("2027-02-01T00:00:00.000Z").toISOString() } }, "BILLING_QUOTE_STALE_OR_INVALID");
   code({ verifiedQuote: { ...quote, completeThroughMonth: "2027-01-01" } }, "BILLING_QUOTE_STALE_OR_INVALID");
 });
 
