@@ -525,7 +525,7 @@ test("missing hold timestamp and invalid contact email reject profile edits", as
       return true;
     });
   const other = await fixture();
-  await assert.rejects(() => updateHeldProfile({
+  assert.throws(() => updateHeldProfile({
     businessId: other.businessId, userId: other.userId,
     expectedVersion: 0, fullName: "Valid Owner", preferredLanguage: "en",
     displayName: "Store", contactEmail: "not-an-email", address: "",
