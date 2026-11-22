@@ -41,7 +41,7 @@ export interface HoldNoticeInspection {
   subscriptionChanged: false;
   paymentInitiated: false;
 }
-interface SubscriptionRow extends RowDataPacket { id: string; status: string }
+interface SubscriptionRow extends RowDataPacket { id: string; status: string; starts_at: Date | null }
 interface PermissionRow extends RowDataPacket { allowed: number }
 interface ReceiptRow extends RowDataPacket {
   id: string;
@@ -117,7 +117,7 @@ export async function inspectStoredHoldNotice(
     }
     const [subs] = await connection.execute<SubscriptionRow[]>(
       [
-        "SELECT bs.id, bs.status FROM businesses b JOIN business_subscriptions bs",
+        "SELECT bs.id, bs.status, bs.starts_at FROM businesses b JOIN business_subscriptions bs",
         "ON bs.id=b.current_subscription_id AND bs.business_id=b.id",
         "WHERE b.id=? FOR UPDATE",
       ].join(" "),
@@ -125,7 +125,10 @@ export async function inspectStoredHoldNotice(
     );
     const subscription = subs[0];
     if (!subscription || subscription.id !== input.subscriptionId ||
-        subscription.status !== "ACTIVE") {
+        subscription.status !== "ACTIVE" ||
+        !(subscription.starts_at instanceof Date) ||
+        !Number.isFinite(subscription.starts_at.getTime()) ||
+        subscription.starts_at.getTime() > input.asOf.getTime()) {
       throw new HoldNoticeEvidenceError("CURRENT_ACTIVE_SUBSCRIPTION_REQUIRED");
     }
     const [permissions] = await connection.execute<PermissionRow[]>(
@@ -163,6 +166,7 @@ export async function inspectStoredHoldNotice(
     } else if (receipt.provenance_status !== "VERIFIED") {
       inspection = result("UNVERIFIED_PROVIDER_RECEIPT", receipt);
     } else if (!receipt.provider || !receipt.provider_delivery_reference ||
+        receipt.delivered_at.getTime() < subscription.starts_at.getTime() ||
         !sha.test(receipt.provider_event_sha256) ||
         !(receipt.delivered_at instanceof Date) ||
         !(receipt.verified_at instanceof Date) ||
