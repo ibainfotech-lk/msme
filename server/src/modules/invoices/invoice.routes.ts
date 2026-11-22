@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../../middleware/auth.middleware";
 import { requireCheckoutOrigin } from "../../middleware/checkout-origin.middleware";
 import {
-  issueInvoice, listInvoices, getInvoice, InvoiceIssueError,
+  issueInvoice, listInvoices, getInvoice, getInvoiceQuota, InvoiceIssueError,
 } from "./invoice-issuance.service";
 
 /** F.17.2 — private development-only routes, never production-enabled. */
@@ -53,6 +53,17 @@ router.get("/businesses/:businessId",async(req,res,next)=>{
       limit:q.data.limit,
       cursor:q.data.cursorId&&q.data.cursorCreatedAt?
         {id:q.data.cursorId,createdAt:q.data.cursorCreatedAt}:undefined,
+    });
+    res.set("Cache-Control","private, no-store");
+    res.json({success:true,...result});
+  }catch(e){failed(e,res,next);}
+});
+router.get("/businesses/:businessId/quota",async(req,res,next)=>{
+  const p=businessRef.safeParse(req.params);
+  if(!p.success){res.status(400).json({success:false,code:"INVALID_INVOICE_REFERENCE"});return;}
+  try{
+    const result=await getInvoiceQuota({
+      businessId:p.data.businessId,userId:req.session.userId!,
     });
     res.set("Cache-Control","private, no-store");
     res.json({success:true,...result});
