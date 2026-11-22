@@ -57,6 +57,9 @@ jobs:
       - name: Verify F.16.5 policy tests
         run: node --import tsx --test server/tests/trial-promotion.policy.test.ts server/tests/checkout-recovery.policy.test.ts
 
+      - name: Verify registration legal agreement policy
+        run: npm run test:registration-legal
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
