@@ -51,7 +51,7 @@ before(async()=>{
   assert.equal((await rows("SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1"))[0]?.token,
     "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
-  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n),20);
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n),21);
   await db.execute(
     "INSERT INTO permissions (id, `key`, description) VALUES (?, 'billing.manage', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
     [uid()]
