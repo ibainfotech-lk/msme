@@ -16,6 +16,7 @@ import businessRoutes from "./routes/business.routes";
 import reconciliationReviewRoutes from "./modules/payments/payment-reconciliation-review.routes";
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware";
 import transactionRoutes from "./routes/transaction.routes";
+import heldHistoryRoutes from "./modules/subscriptions/held-history.routes";
 
 
 const app = express();
@@ -123,6 +124,13 @@ app.use(
 
 
 app.use("/api/transactions", transactionRoutes);
+
+// Private development-only held-account history adapter.
+// No public production routes, new entries, new invoices or new reports.
+if (process.env.NODE_ENV === "development" &&
+    process.env.NOTETO_HOLD_HISTORY_API_ENABLED === "true") {
+    app.use("/api/hold-history", heldHistoryRoutes);
+}
 
 // Health check
 app.get("/api/health", async (_req, res) => {
