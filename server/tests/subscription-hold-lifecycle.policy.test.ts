@@ -94,7 +94,7 @@ test("incomplete or stale billing evidence never authorizes a hold", () => {
 test("never infer hold from fabricated or mismatched totals", () => {
   code({ verifiedQuote: { ...quote, totalOutstandingLkr: "499.00" } }, "BILLING_QUOTE_STALE_OR_INVALID");
   code({ verifiedQuote: { ...quote, lines: [...quote.lines, quote.lines[0]] } }, "BILLING_QUOTE_STALE_OR_INVALID");
-  code({ verifiedQuote: { ...quote, paymentActionAllowed: true as false } }, "BILLING_QUOTE_STALE_OR_INVALID");
+  code({ verifiedQuote: { ...quote, paymentActionAllowed: true as unknown as false } }, "BILLING_QUOTE_STALE_OR_INVALID");
 });
 
 test("trial/promotion uncertainty and payment/dispute issues halt the decision", () => {
