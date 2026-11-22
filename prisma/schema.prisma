@@ -310,6 +310,40 @@ model BusinessProfileEditAudit {
   @@map("business_profile_edit_audits")
 }
 
+enum HoldReviewTransition {
+  PLACE_HOLD
+  RESTORE_ACCESS
+}
+
+enum HoldReviewDecisionStatus {
+  POLICY_READY
+}
+
+model SubscriptionHoldReviewJournal {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  reviewerUserId String @map("reviewer_user_id") @db.Char(36)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(191)
+  transitionType HoldReviewTransition @map("transition_type")
+  decisionStatus HoldReviewDecisionStatus @map("decision_status")
+  evidenceSha256 String @map("evidence_sha256") @db.Char(64)
+  statementAsOf DateTime @map("statement_as_of") @db.DateTime(3)
+  outstandingLkr Decimal @map("outstanding_lkr") @db.Decimal(12,2)
+  noticeReference String? @map("notice_reference") @db.VarChar(191)
+  graceEndsAt DateTime? @map("grace_ends_at") @db.DateTime(3)
+  reviewReason String @map("review_reason") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_hold_review_subscription_tenant")
+  reviewer User @relation(fields: [reviewerUserId], references: [id], onDelete: Restrict, map: "fk_hold_review_reviewer")
+
+  @@unique([businessId, idempotencyKey], map: "uq_hold_review_idempotency_business")
+  @@index([businessId, subscriptionId, createdAt], map: "idx_hold_review_subscription_time")
+  @@index([reviewerUserId, createdAt], map: "idx_hold_review_actor_time")
+  @@map("subscription_hold_review_journal")
+}
+
 model ArchivedReportSnapshot {
   id String @id @default(uuid()) @db.Char(36)
   businessId String @map("business_id") @db.Char(36)
@@ -373,6 +407,7 @@ model User {
   createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
   editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
   businessProfileEdits BusinessProfileEditAudit[]
+  holdReviewJournalEntries SubscriptionHoldReviewJournal[]
 
   @@map("users")
 }
@@ -548,6 +583,7 @@ model BusinessSubscription {
   entitlements SubscriptionEntitlement[]
   events       SubscriptionEvent[]
   monthlyDues  SubscriptionMonthlyDue[]
+  holdReviewJournalEntries SubscriptionHoldReviewJournal[]
   archivedReportSnapshots ArchivedReportSnapshot[]
   heldAt DateTime? @map("held_at") @db.DateTime(3)
 
