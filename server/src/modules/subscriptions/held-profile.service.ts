@@ -33,7 +33,7 @@ export interface HeldProfileSnapshot {
   businessId: string;
   businessLegalName: string;
   personalPhone: string;
-  personalVerifiedEmail: string | null;
+  registrationEmail: string | null;
   mode: "HOLD";
   version: number;
   profile: HeldProfileDetails;
@@ -176,7 +176,7 @@ export function getHeldProfile(
     businessId: ref.businessId,
     businessLegalName: state.businessName,
     personalPhone: state.user.phone,
-    personalVerifiedEmail: state.user.email,
+    registrationEmail: state.user.email,
     mode: "HOLD",
     version: state.contact?.version ?? 0,
     profile: {
