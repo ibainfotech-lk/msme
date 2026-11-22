@@ -166,11 +166,13 @@ export async function inspectStoredHoldNotice(
     } else if (receipt.provenance_status !== "VERIFIED") {
       inspection = result("UNVERIFIED_PROVIDER_RECEIPT", receipt);
     } else if (!receipt.provider || !receipt.provider_delivery_reference ||
-        receipt.delivered_at.getTime() < subscription.starts_at.getTime() ||
         !sha.test(receipt.provider_event_sha256) ||
         !(receipt.delivered_at instanceof Date) ||
         !(receipt.verified_at instanceof Date) ||
         !(receipt.grace_ends_at instanceof Date) ||
+        !Number.isFinite(receipt.delivered_at.getTime()) ||
+        !Number.isFinite(receipt.grace_ends_at.getTime()) ||
+        receipt.delivered_at.getTime() < subscription.starts_at.getTime() ||
         !Number.isFinite(receipt.verified_at.getTime()) ||
         receipt.verified_at.getTime() > input.asOf.getTime() ||
         receipt.verified_at.getTime() < receipt.delivered_at.getTime() ||
