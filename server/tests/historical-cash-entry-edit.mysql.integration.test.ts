@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import express from "express";
+import session from "express-session";
 import mysql, { type RowDataPacket } from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import {
@@ -10,6 +14,7 @@ import {
   type HistoricalEntryEditInput,
 } from "../src/modules/transactions/historical-cash-entry-edit.service";
 import { listPreviousEntries, listPreviouslyGeneratedReports, HeldHistoryError } from "../src/modules/subscriptions/held-history-list.service";
+import heldHistoryRouter from "../src/modules/subscriptions/held-history.routes";
 
 /* DESTRUCTIVE FIXTURES: DISPOSABLE GitHub Actions MySQL 8.4 only. */
 const guard =
@@ -27,6 +32,7 @@ const guard =
 if (!guard) throw Error("STOP: Historical edit fixtures require disposable MySQL 8.4 CI.");
 process.env.NOTETO_HISTORICAL_EDIT_ENABLED = "true";
 process.env.NOTETO_HOLD_HISTORY_API_ENABLED = "true";
+process.env.NOTETO_SUBSCRIPTION_HOLD_POLICY_ENABLED = "true";
 const db = mysql.createPool({
   host: "127.0.0.1", port: 3307, user: "noteto_services",
   password: "ci_dummy_unused_password", database: "noteto_dev",
@@ -78,7 +84,7 @@ async function fixture(options: {
       [roleId, businessId]
     );
     await con.execute(
-      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` IN ('transactions.update','transactions.read','reports.read')",
+      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` IN ('transactions.update','transactions.read','reports.read','business.read')",
       [roleId]
     );
     await con.execute(
@@ -330,4 +336,108 @@ test("production guard rejects held history listing before DB connection",async(
       }
     );
   }finally {process.env.NODE_ENV="development";}
+});
+
+
+test("authenticated HTTP access reports HOLD and blocks forged historical edits", async () => {
+  const f = await fixture();
+  const nonce = uid();
+  const app = express();
+  app.use(express.json({ limit: "20kb" }));
+  app.use(session({
+    name: "noteto.sid",
+    secret: "noteto-disposable-ci-only-session-secret-for-hold-history",
+    resave: false, saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: "lax" },
+  }));
+  app.post("/__ci/mint", (req, res, next) => {
+    if (req.get("X-CI-Nonce") !== nonce) {
+      res.sendStatus(403);
+      return;
+    }
+    req.session.userId = f.userId;
+    req.session.save(err => err ? next(err) : res.json({ success: true }));
+  });
+  app.use("/api/hold-history", heldHistoryRouter);
+  const server = createServer(app);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const base = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+    const path = "/api/hold-history/businesses/" + f.businessId;
+    const unauth = await fetch(base + path + "/access");
+    assert.equal(unauth.status, 401);
+    const minted = await fetch(base + "/__ci/mint", {
+      method: "POST", headers: { "X-CI-Nonce": nonce },
+    });
+    assert.equal(minted.status, 200);
+    const cookie = minted.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie);
+    const access = await fetch(base + path + "/access", { headers: { Cookie: cookie } });
+    assert.equal(access.status, 200);
+    const accessData = await access.json() as Record<string, unknown>;
+    assert.equal(accessData.mode, "HOLD");
+    const listed = await fetch(base + path + "/entries", { headers: { Cookie: cookie } });
+    assert.equal(listed.status, 200);
+    const history = await listed.json() as { mode: string; items: unknown[] };
+    assert.equal(history.mode, "HOLD");
+    assert.equal(history.items.length, 1);
+
+    const entryUrl = base + path + "/entries/" + f.entryId;
+    const patchBody = JSON.stringify({
+      expectedVersion: 1, amountLkr: "450.00",
+      category: "Sales corrected", description: "October correction",
+      occurredOn: "2026-10-19", reason: "Incorrect original receipt",
+    });
+    const noOrigin = await fetch(entryUrl, {
+      method: "PATCH", headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: patchBody,
+    });
+    assert.equal(noOrigin.status, 403);
+    const forged = await fetch(entryUrl, {
+      method: "PATCH",
+      headers: {
+        Cookie: cookie, "Content-Type": "application/json",
+        Origin: "https://malicious.example",
+      },
+      body: patchBody,
+    });
+    assert.equal(forged.status, 403);
+    assert.equal(Number((await rows(
+      "SELECT COUNT(*) AS n FROM cash_transaction_edit_audits WHERE cash_transaction_id = ?",
+      [f.entryId]
+    ))[0]?.n), 0);
+
+    const valid = await fetch(entryUrl, {
+      method: "PATCH",
+      headers: {
+        Cookie: cookie, "Content-Type": "application/json",
+        Origin: "http://localhost:5173",
+      },
+      body: patchBody,
+    });
+    assert.equal(valid.status, 200);
+    const edited = await valid.json() as { success: boolean; version: number };
+    assert.equal(edited.success, true);
+    assert.equal(edited.version, 2);
+    assert.equal(Number((await rows(
+      "SELECT COUNT(*) AS n FROM cash_transaction_edit_audits WHERE cash_transaction_id = ?",
+      [f.entryId]
+    ))[0]?.n), 1);
+
+    const forbiddenCreate = await fetch(base + path + "/entries", {
+      method: "POST", headers: { Cookie: cookie, Origin: "http://localhost:5173" },
+      body: "{}",
+    });
+    assert.equal(forbiddenCreate.status, 405);
+    const forbiddenGenerate = await fetch(base + path + "/reports", {
+      method: "POST", headers: { Cookie: cookie, Origin: "http://localhost:5173" },
+      body: "{}",
+    });
+    assert.equal(forbiddenGenerate.status, 405);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
