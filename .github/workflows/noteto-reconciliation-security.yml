@@ -60,6 +60,9 @@ jobs:
       - name: Verify registration legal agreement policy
         run: npm run test:registration-legal
 
+      - name: Verify read-only monthly arrears policy
+        run: npm run test:subscription-arrears-policy
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
@@ -158,6 +161,9 @@ jobs:
 
       - name: Verify guarded promotional reservations against disposable MySQL
         run: npm run test:mysql-promotion-reservation
+
+      - name: Verify monthly arrears schema and read-only quote against disposable MySQL
+        run: npm run test:mysql-subscription-arrears
 
   client-build:
     name: React client TypeScript build
