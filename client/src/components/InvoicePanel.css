@@ -1,0 +1,32 @@
+/* F.17.2: private-testing invoice interface, Noteto palette. */
+.noteto-invoices{display:grid;gap:16px;color:#164d4a;padding-top:16px;border-top:2px solid #c3ddd5}
+.invoice-panel-head{background:#eef7f3;border:1px solid #c7ded5;padding:18px;border-radius:15px}
+.invoice-panel-head h2{margin:0 0 8px}
+.invoice-panel-head p{margin:6px 0;line-height:1.5}
+.invoice-quota{display:grid;gap:7px;border:1px solid #b0d0c1;border-radius:10px;padding:12px;margin-top:14px}
+.invoice-quota span{font-size:13px}
+.invoice-quota p{color:#8e5b1e;font-weight:650}
+.invoice-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px;border:1px solid #d0e1da;border-radius:14px}
+.invoice-form label{display:grid;gap:5px;font-weight:650;font-size:14px;min-width:0}
+.invoice-form input,.invoice-form textarea{font:inherit;color:#164d4a;padding:10px;border:1px solid #a9c8bc;border-radius:8px;width:100%;min-width:0;background:white}
+.invoice-form textarea{min-height:75px}
+.invoice-wide,.invoice-line,.invoice-add-line,.invoice-issue{grid-column:1/-1}
+.invoice-line{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px;border:1px solid #d0e1da;border-radius:10px;background:#f9fcfa}
+.invoice-line button{align-self:end;grid-column:1/-1;justify-self:start}
+.invoice-issue,.invoice-add-line{margin:0!important;justify-self:start}
+.invoice-history{display:grid;gap:10px}
+.invoice-history h3{margin:0 0 4px}
+.invoice-history-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;border:1px solid #d3e3db;background:white;border-radius:12px;padding:14px}
+.invoice-history-item p{margin:5px 0;color:#4a7a74}
+.invoice-history-item small{color:#6a786d;font-size:12px}
+.invoice-history-item>div:last-child{display:grid;gap:8px;justify-items:end}
+.invoice-history-item button{margin:0}
+.invoice-detail{background:#fff;padding:18px;border-radius:14px;border:1px solid #bed5cb}
+.invoice-detail h3{margin:0 0 8px}
+.invoice-detail ul{padding-left:18px}
+.invoice-detail li{margin:7px 0}
+.invoice-detail li strong{float:right;margin-left:12px}
+.invoice-panel-footer{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.invoice-panel-footer button{margin:0}
+.invoice-panel-footer p{font-size:12px;line-height:1.5;color:#77633d}
+@media(max-width:700px){.invoice-form{grid-template-columns:1fr}.invoice-line{grid-template-columns:1fr}.invoice-history-item>div:last-child{justify-items:start}}
