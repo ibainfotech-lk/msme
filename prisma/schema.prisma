@@ -172,6 +172,25 @@ enum SubscriptionEventType {
   PROMOTION_APPLIED
 }
 
+model RegistrationLegalAcceptance {
+  id String @id @default(uuid()) @db.Char(36)
+  userId String @map("user_id") @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  checkoutOrderId String @unique(map: "uq_registration_legal_checkout") @map("checkout_order_id") @db.Char(36)
+  termsVersion String @map("terms_version") @db.VarChar(40)
+  privacyNoticeVersion String @map("privacy_notice_version") @db.VarChar(40)
+  acceptanceLanguage PreferredLanguage @map("acceptance_language")
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, map: "fk_registration_legal_user")
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_registration_legal_business")
+  checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_registration_legal_checkout_tenant")
+
+  @@index([userId, acceptedAt], map: "idx_registration_legal_user_time")
+  @@index([businessId, acceptedAt], map: "idx_registration_legal_business_time")
+  @@map("registration_legal_acceptances")
+}
+
 model User {
   id                String            @id @default(uuid()) @db.Char(36)
   phone             String            @unique @db.VarChar(20)
@@ -187,6 +206,7 @@ model User {
   memberships         BusinessMembership[]
   sentInvitations     BusinessInvitation[] @relation("InvitationSender")
   acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptor")
+  legalAcceptances RegistrationLegalAcceptance[]
 
   @@map("users")
 }
@@ -208,6 +228,7 @@ model Business {
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
   promotionRedemptions PromotionRedemption[]
+  legalAcceptances RegistrationLegalAcceptance[]
   identityOfferClaims IdentityOfferClaim[]
   verifiedIdentity VerifiedBusinessIdentity?
   introductoryTrialGrant IntroductoryTrialGrant?
@@ -394,6 +415,7 @@ model CheckoutOrder {
   payments PlatformPaymentTransaction[]
   introductoryTrialGrant IntroductoryTrialGrant?
   promotionRedemption PromotionRedemption?
+  registrationLegalAcceptance RegistrationLegalAcceptance?
 
   @@unique([businessId, id])
   @@index([businessId, status])
