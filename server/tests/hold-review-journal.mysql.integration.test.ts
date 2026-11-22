@@ -104,7 +104,7 @@ async function fixture(status:"ACTIVE"|"PAST_DUE"="ACTIVE", allowBilling=true):P
     );
     await connection.execute(
       ["INSERT INTO business_subscriptions(id,business_id,plan_id,status,starts_at,held_at,updated_at)",
-       "VALUES (?,?,?,?, '2027-01-01 00:00:00.000', ?, UTC_TIMESTAMP(3))"].join(" "),
+       "VALUES (?,?,?,?, '2026-10-01 00:00:00.000', ?, UTC_TIMESTAMP(3))"].join(" "),
       [subscriptionId,businessId,planId,status,status==="PAST_DUE"?"2027-02-16 00:00:00.000":null]
     );
     await connection.execute(
@@ -306,6 +306,18 @@ test("receipt provider reference cannot be reused",async()=>{
     uid(),f.businessId,f.subscriptionId,stored.providerRef,"e".repeat(64),
     termsVersion,statementHash,
   ]));
+});
+
+test("receipt delivered before subscription started is rejected",async()=>{
+  const f=await fixture();
+  await db.execute(
+    "UPDATE business_subscriptions SET starts_at = '2026-11-20 00:00:00.000' WHERE id = ?",
+    [f.subscriptionId]
+  );
+  await storeReceipt(f);
+  const result=await inspectStoredHoldNotice(noticeInput(f));
+  assert.equal(result.code,"INVALID_STORED_PROVENANCE");
+  assert.equal(result.transitionAuthorized,false);
 });
 
 test("notice records cannot be used for already-held subscriptions",async()=>{
