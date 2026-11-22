@@ -95,7 +95,7 @@ interface CreateReceiptRow extends RowDataPacket {
   cash_transaction_id: string;
   request_sha256: string;
 }
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[89ab0-9]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MONEY = /^(?:0|[1-9][0-9]{0,9})\.[0-9]{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const KEY = /^[A-Za-z0-9:_-]{8,100}$/;
