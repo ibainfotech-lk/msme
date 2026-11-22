@@ -19,6 +19,7 @@
     "test:mysql-subscription-arrears": "node --import tsx --test server/tests/subscription-arrears.mysql.integration.test.ts",
     "test:mysql-verified-due-allocation": "node --import tsx --test server/tests/verified-due-allocation.mysql.integration.test.ts",
     "test:subscription-hold-policy": "node --import tsx --test server/tests/subscription-hold-access.policy.test.ts",
+    "test:subscription-hold-lifecycle": "node --import tsx --test server/tests/subscription-hold-lifecycle.policy.test.ts",
     "test:mysql-subscription-hold": "node --import tsx --test server/tests/subscription-hold-access.mysql.integration.test.ts",
     "test:mysql-archived-reports": "node --import tsx --test server/tests/archived-report-download.mysql.integration.test.ts",
     "test:mysql-historical-entry-edits": "node --import tsx --test server/tests/historical-cash-entry-edit.mysql.integration.test.ts",
