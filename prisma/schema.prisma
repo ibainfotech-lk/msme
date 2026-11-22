@@ -254,6 +254,58 @@ model CashTransaction {
   @@map("cash_transactions")
 }
 
+enum InvoiceIssueStatus {
+  ISSUED
+}
+
+model SalesInvoice {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  invoiceNumber String @map("invoice_number") @db.VarChar(40)
+  billingMonth DateTime @map("billing_month") @db.Date
+  invoiceSequence Int @map("invoice_sequence") @db.UnsignedInt
+  issuedOn DateTime @map("issued_on") @db.Date
+  customerName String @map("customer_name") @db.VarChar(150)
+  customerEmail String? @map("customer_email") @db.VarChar(191)
+  notes String @default("") @db.VarChar(500)
+  totalLkr Decimal @map("total_lkr") @db.Decimal(12,2)
+  status InvoiceIssueStatus @default(ISSUED)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(100)
+  requestSha256 String @map("request_sha256") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_sales_invoice_subscription_tenant")
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_sales_invoice_creator")
+  lines SalesInvoiceLine[]
+
+  @@unique([businessId, id], map: "uq_sales_invoice_business_id")
+  @@unique([businessId, invoiceNumber], map: "uq_sales_invoice_business_number")
+  @@unique([businessId, billingMonth, invoiceSequence], map: "uq_sales_invoice_month_sequence")
+  @@unique([businessId, idempotencyKey], map: "uq_sales_invoice_business_idempotency")
+  @@index([businessId, createdAt, id], map: "idx_sales_invoice_business_issued")
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceLine {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  invoiceId String @map("invoice_id") @db.Char(36)
+  lineNumber Int @map("line_number") @db.UnsignedInt
+  description String @db.VarChar(200)
+  quantity Decimal @db.Decimal(10,2)
+  unitPriceLkr Decimal @map("unit_price_lkr") @db.Decimal(12,2)
+  lineTotalLkr Decimal @map("line_total_lkr") @db.Decimal(12,2)
+
+  invoice SalesInvoice @relation(fields: [businessId, invoiceId], references: [businessId, id], onDelete: Restrict, map: "fk_sales_invoice_line_tenant")
+
+  @@unique([invoiceId, lineNumber], map: "uq_sales_invoice_line_number")
+  @@index([businessId, invoiceId], map: "idx_sales_invoice_lines_tenant_invoice")
+  @@map("sales_invoice_lines")
+}
+
 model CashTransactionCreateRequest {
   id String @id @default(uuid()) @db.Char(36)
   businessId String @map("business_id") @db.Char(36)
@@ -460,6 +512,7 @@ model User {
   createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
   editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
   createdCashTransactionRequests CashTransactionCreateRequest[]
+  issuedSalesInvoices SalesInvoice[]
   businessProfileEdits BusinessProfileEditAudit[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
 
@@ -484,6 +537,7 @@ model Business {
   paymentTransactions  PlatformPaymentTransaction[]
   archivedReportSnapshots ArchivedReportSnapshot[]
   cashTransactions CashTransaction[]
+  salesInvoices SalesInvoice[]
   profileDetails BusinessProfileDetails?
   profileEditAudits BusinessProfileEditAudit[]
   promotionRedemptions PromotionRedemption[]
@@ -639,6 +693,7 @@ model BusinessSubscription {
   monthlyDues  SubscriptionMonthlyDue[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
   holdNoticeReceipts SubscriptionHoldNoticeReceipt[]
+  salesInvoices SalesInvoice[]
   archivedReportSnapshots ArchivedReportSnapshot[]
   heldAt DateTime? @map("held_at") @db.DateTime(3)
 
