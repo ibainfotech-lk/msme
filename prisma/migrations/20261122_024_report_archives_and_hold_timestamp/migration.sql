@@ -36,16 +36,13 @@ CREATE TABLE `archived_report_snapshots` (
   CONSTRAINT `chk_archive_pdf_type` CHECK (`content_type` = 'application/pdf')
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- An ordinary application account must not overwrite archived report files.
--- Future legal retention and deletion operations require separate design.
-CREATE TRIGGER `trg_archived_report_no_update`
-BEFORE UPDATE ON `archived_report_snapshots`
-FOR EACH ROW
-SIGNAL SQLSTATE '45000'
-SET MESSAGE_TEXT = 'Archived report snapshots cannot be modified';
-
-CREATE TRIGGER `trg_archived_report_no_delete`
-BEFORE DELETE ON `archived_report_snapshots`
-FOR EACH ROW
-SIGNAL SQLSTATE '45000'
-SET MESSAGE_TEXT = 'Archived report snapshots cannot be deleted';
+-- Do not create UPDATE/DELETE triggers here. MySQL 8.4 installations with
+-- binary logging can reject trigger creation (ERROR 1419) for an
+-- unprivileged application migration account. Do not grant SUPER or enable
+-- log_bin_trust_function_creators as a workaround.
+--
+-- Until separately reviewed object-storage immutability and database
+-- least-privilege grants are in place, archive immutability is NOT a
+-- database-level guarantee. The internal read service checks SHA-256 but
+-- cannot protect against a database writer replacing both bytes and hash.
+-- This migration is for ephemeral development CI, not production rollout.
