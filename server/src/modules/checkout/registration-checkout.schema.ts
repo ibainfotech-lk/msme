@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { checkoutIdempotencyKeySchema } from "../checkout/checkout.schema";
+import { REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION } from "./registration-legal.policy";
 
 // Email is required for new registration but is NOT verified identity.
 // Phone OTP remains the authentication method.
@@ -20,6 +21,10 @@ export const registrationCheckoutBodySchema = z.object({
   ]),
   preferred_language: z.enum(["en", "ta", "si"]),
   plan_code: z.string().trim().min(1).max(50).regex(/^[A-Z0-9_]+$/),
+  terms_accepted: z.literal(true),
+  privacy_acknowledged: z.literal(true),
+  terms_version: z.literal(REGISTRATION_TERMS_VERSION),
+  privacy_version: z.literal(REGISTRATION_PRIVACY_VERSION),
 }).strict();
 
 export const registrationIdempotencyKeySchema =
