@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { Language } from "../locales";
 import "./HeldAccountScreen.css";
+import HeldProfileEditor from "./HeldProfileEditor";
 
 type EntryType = "INCOME" | "EXPENSE";
 type ArchiveType = "DAILY" | "WEEKLY" | "YEARLY";
@@ -416,11 +417,7 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
         <p className="hold-note">{t.duesNote}</p>
       </section>
 
-      <section className="hold-profile" aria-label={t.profile}>
-        <h3>{t.profile}</h3>
-        <p><strong>{businessName}</strong></p>
-        <p>{t.profileNote}</p>
-      </section>
+      <HeldProfileEditor businessId={businessId} businessName={businessName} language={language} />
 
       <div className="hold-tabs" role="group" aria-label={t.title}>
         <button type="button" aria-pressed={tab === "entries"}
