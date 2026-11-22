@@ -230,12 +230,14 @@ export async function allocateVerifiedMonthlyPayment(
 
     const remaining = owed - paidOnDue - requested;
     const newDueStatus = remaining === 0 ? "SETTLED" : "OPEN";
-    const [updated] = await connection.execute<ResultSetHeader>(
-      "UPDATE subscription_monthly_dues SET status = ? WHERE id = ? AND business_id = ? AND status = ?",
-      [newDueStatus, input.monthlyDueId, input.businessId, due.status]
-    );
-    if (updated.affectedRows !== 1) {
-      throw new VerifiedDueAllocationError("DUE_STATUS_CONFLICT");
+    if (newDueStatus === "SETTLED") {
+      const [updated] = await connection.execute<ResultSetHeader>(
+        "UPDATE subscription_monthly_dues SET status = 'SETTLED' WHERE id = ? AND business_id = ? AND status = 'OPEN'",
+        [input.monthlyDueId, input.businessId]
+      );
+      if (updated.affectedRows !== 1) {
+        throw new VerifiedDueAllocationError("DUE_STATUS_CONFLICT");
+      }
     }
 
     await connection.commit();
