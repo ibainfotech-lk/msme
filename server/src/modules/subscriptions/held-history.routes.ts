@@ -1,4 +1,8 @@
 import { Router } from "express";
+import {
+  previewCurrentHeldSubscriptionArrears, ArrearsPreviewError,
+} from "./subscription-arrears-preview.service";
+import { MonthlyArrearsError } from "./subscription-arrears.policy";
 import { evaluateBusinessHoldCapability, SubscriptionHoldAccessError } from "./subscription-hold-access.service";
 import { z } from "zod";
 import { requireAuth } from "../../middleware/auth.middleware";
@@ -38,10 +42,15 @@ function respondWithError(error: unknown, res: import("express").Response, next:
   if (error instanceof HeldHistoryError ||
       error instanceof HistoricalEntryEditError ||
       error instanceof ArchivedReportError ||
-      error instanceof SubscriptionHoldAccessError) {
+      error instanceof SubscriptionHoldAccessError ||
+      error instanceof ArrearsPreviewError) {
     res.status(error.statusCode).json({
       success: false, code: error.code,
     });
+    return;
+  }
+  if (error instanceof MonthlyArrearsError) {
+    res.status(409).json({ success: false, code: error.code });
     return;
   }
   next(error);
@@ -67,6 +76,25 @@ router.get("/businesses/:businessId/access", async (req, res, next) => {
     }
     res.set("Cache-Control", "private, no-store");
     res.json({ success: true, mode: decision.mode });
+  } catch (error) { respondWithError(error, res, next); }
+});
+
+// Read-only verified subscription statement. No client-supplied amount, date,
+// subscription ID, payment token, or invoice creation is accepted.
+router.get("/businesses/:businessId/arrears", async (req, res, next) => {
+  const route = ids.safeParse(req.params);
+  if (!route.success) {
+    res.status(400).json({ success: false, code: "INVALID_ARREARS_REFERENCE" });
+    return;
+  }
+  try {
+    const quote = await previewCurrentHeldSubscriptionArrears({
+      businessId: route.data.businessId,
+      userId: req.session.userId!,
+      asOf: new Date(),
+    });
+    res.set("Cache-Control", "private, no-store");
+    res.json({ success: true, ...quote });
   } catch (error) { respondWithError(error, res, next); }
 });
 
