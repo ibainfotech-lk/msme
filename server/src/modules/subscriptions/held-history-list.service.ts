@@ -127,11 +127,16 @@ async function listHistory<T>(
     );
     const subscription = subscriptions[0];
     if (!subscription) throw new HeldHistoryError("SUBSCRIPTION_ACCESS_LOCKED");
+    // Metadata listing has no individual saved-report object yet. Check
+    // access mode using dashboard capability after reports.read permission;
+    // the SQL cutoff ensures only pre-hold report IDs can be listed.
+    const accessCapability: BusinessCapability =
+      capability === "VIEW_SAVED_REPORT" ? "VIEW_DASHBOARD" : capability;
     const decision = decideSubscriptionCapability({
       businessStatus: business.status as SubscriptionAccessState["businessStatus"],
       currentSubscriptionStatus: subscription.status,
       hasAuthorizedMembership: true,
-    }, capability as BusinessCapability);
+    }, accessCapability);
     if (!decision.allowed || decision.mode === "LOCKED") {
       throw new HeldHistoryError(decision.code);
     }
