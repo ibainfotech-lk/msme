@@ -4,6 +4,7 @@ import pool from "../../config/database";
 import type { PreferredLanguage, RegistrationType } from "../../services/registration.service";
 import { insertCheckoutOrder } from "../checkout/checkout.repository";
 import { registrationCheckoutEmailSchema } from "./registration-checkout.schema";
+import { hasValidRegistrationLegalAgreement, REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION } from "./registration-legal.policy";
 
 /**
  * Development-only, verified-OTP prepayment registration.
@@ -31,6 +32,10 @@ export interface RegistrationCheckoutInput {
   preferredLanguage: PreferredLanguage;
   planCode: string;
   idempotencyKey: string;
+  termsAccepted: boolean;
+  privacyAcknowledged: boolean;
+  termsVersion: string;
+  privacyVersion: string;
 }
 
 export interface RegistrationCheckoutResult {
@@ -92,6 +97,13 @@ export async function createRegistrationCheckout(
     );
   }
   const normalizedEmail = parsedEmail.data;
+
+  if (!hasValidRegistrationLegalAgreement(input)) {
+    throw new RegistrationCheckoutError(
+      400, "LEGAL_ACCEPTANCE_REQUIRED",
+      "Review and explicitly agree to the current Terms and acknowledge the Privacy Notice."
+    );
+  }
 
   const connection = await getConnection();
   let started = false;
@@ -212,6 +224,20 @@ export async function createRegistrationCheckout(
       idempotencyKey: input.idempotencyKey,
       expiresAt,
     });
+
+    // Store agreement proof in the SAME transaction as the pending registration.
+    // The server, not the browser, supplies authoritative document versions and time.
+    await connection.execute(
+      [
+        "INSERT INTO registration_legal_acceptances",
+        "(id, user_id, business_id, checkout_order_id, terms_version,",
+        "privacy_notice_version, acceptance_language, accepted_at)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))",
+      ].join(" "),
+      [randomUUID(), userId, businessId, checkoutOrderId,
+       REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION,
+       input.preferredLanguage]
+    );
 
     await connection.commit();
     started = false;
