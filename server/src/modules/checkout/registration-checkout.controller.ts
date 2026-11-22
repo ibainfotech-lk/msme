@@ -79,6 +79,10 @@ export const registerCheckoutController: RequestHandler = async (req, res, next)
         "SOLE_PROPRIETOR" | "PRIVATE_LIMITED" | "COMMUNITY_ORGANIZATION",
       preferredLanguage: body.data.preferred_language,
       planCode: body.data.plan_code,
+      termsAccepted: body.data.terms_accepted,
+      privacyAcknowledged: body.data.privacy_acknowledged,
+      termsVersion: body.data.terms_version,
+      privacyVersion: body.data.privacy_version,
       idempotencyKey: key.data,
     });
 
