@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import HeldAccountScreen from "./components/HeldAccountScreen";
+import CoreCashbookScreen from "./components/CoreCashbookScreen";
 import { getTranslations, type Language } from "./locales";
 import {
   REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION,
@@ -70,6 +71,10 @@ interface Summary {
 // Server authorization remains authoritative; this flag grants no backend access.
 const heldUiEnabled = import.meta.env.DEV &&
   import.meta.env.VITE_NOTETO_HOLD_MODE_UI_ENABLED === "true";
+// Private pilot only. Both server-side RBAC/subscription checks and this UI
+// guard are required; no production route or customer data is enabled.
+const cashbookUiEnabled = import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_F17_BOOKKEEPING_UI_ENABLED === "true";
 
 const languages = [
   { id: "en" as const, name: "English", subtitle: "Continue in English" },
@@ -273,7 +278,7 @@ export default function App() {
         setSelectedBusiness(selected);
         setPendingCheckout(null);
 
-        if (active && heldUiEnabled) {
+        if (active && (heldUiEnabled || cashbookUiEnabled)) {
           // Never infer HOLD/FULL from cached business fields or the browser.
           // Fail closed if the server cannot confirm the current access mode.
           try {
@@ -281,8 +286,8 @@ export default function App() {
               "/api/hold-history/businesses/" + encodeURIComponent(active.id) + "/access"
             );
             if (access.mode === "HOLD") {
-              setScreen("hold");
-              setMessage("");
+              setScreen(heldUiEnabled ? "hold" : "checkout");
+              setMessage(heldUiEnabled ? "" : "Your subscription is on hold; new income and expenses are unavailable.");
             } else if (access.mode === "FULL") {
               setScreen("dashboard");
               setMessage("");
@@ -966,7 +971,17 @@ export default function App() {
           />
         )}
 
-        {screen === "dashboard" && (
+        {screen === "dashboard" && cashbookUiEnabled && selectedBusiness && (
+          <CoreCashbookScreen
+            key={selectedBusiness.id}
+            businessId={selectedBusiness.id}
+            businessName={selectedBusiness.name}
+            language={language ?? "en"}
+            onLogout={() => void logout()}
+          />
+        )}
+
+        {screen === "dashboard" && !cashbookUiEnabled && (
           <>
             <h2 className="screen-title">{t.dashboard}</h2>
             <p>{t.welcome}</p>
