@@ -182,6 +182,37 @@ test("verified partial allocation reduces outstanding but no other month", async
   assert.equal(quote.lines[0].verifiedPaidLkr, "200.00");
 });
 
+test("waived first month is not collected from the customer", async () => {
+  const f = await fixture();
+  await db.execute(
+    "UPDATE subscription_monthly_dues SET status = 'WAIVED', waived_lkr = 499.00 WHERE id = ?",
+    [f.januaryDueId]
+  );
+  const quote = await preview(f);
+  assert.equal(quote.totalOutstandingLkr, "499.00");
+  assert.equal(quote.lines[0].outstandingLkr, "0.00");
+});
+
+test("tenant foreign keys reject allocations tied to another business payment", async () => {
+  const a = await fixture();
+  const b = await fixture();
+  const paymentId = uid();
+  await db.execute(
+    ["INSERT INTO platform_payment_transactions",
+     "(id, business_id, checkout_order_id, idempotency_key, gateway, amount_lkr, status, initiation_status, verified_at, updated_at)",
+     "VALUES (?, ?, ?, ?, 'CI_MOCK', 100.00, 'SUCCEEDED', 'INITIATED', '2027-01-10 00:00:00.000', UTC_TIMESTAMP(3))"].join(" "),
+    [paymentId, b.businessId, b.checkoutOrderId, "ci_ar_other_" + uid()]
+  );
+  await assert.rejects(() => db.execute(
+    ["INSERT INTO subscription_due_allocations",
+     "(id, business_id, monthly_due_id, payment_id, amount_lkr)",
+     "VALUES (?, ?, ?, ?, 100.00)"].join(" "),
+    [uid(), a.businessId, a.januaryDueId, paymentId]
+  ));
+  const count = await rows("SELECT COUNT(*) AS n FROM subscription_due_allocations WHERE monthly_due_id = ?", [a.januaryDueId]);
+  assert.equal(Number(count[0]?.n), 0);
+});
+
 test("missing monthly history is rejected rather than silently under-billed", async () => {
   const f = await fixture(false);
   await assert.rejects(
