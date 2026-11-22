@@ -295,6 +295,25 @@ button:focus-visible {
   text-align: center;
 }
 
+/* Explicit legal agreement before pending-account creation. */
+.registration-legal {
+  margin: 24px 0 20px;
+  padding: 18px;
+  background: #f4faf7;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+}
+.registration-legal h3 { margin: 0 0 8px; font-size: 19px; color: var(--brand-dark); }
+.registration-legal p { margin: 8px 0 12px; line-height: 1.55; }
+.registration-legal .legal-plan-summary { font-weight: 650; }
+.registration-legal .legal-doc-links a { color: var(--brand-dark); font-weight: 650; text-decoration: underline; }
+.legal-check {
+  display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; line-height: 1.55;
+  cursor: pointer; font-size: 14px; color: #254e49;
+}
+.legal-check input { width: 19px; height: 19px; margin: 2px 0 0; flex: 0 0 19px; accent-color: var(--brand-dark); }
+.registration-legal .legal-review-warning { font-size: 12px; color: #816022; }
+
 /* Dashboard summary cards */
 
 .summary-grid {
