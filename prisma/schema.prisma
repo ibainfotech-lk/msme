@@ -279,6 +279,37 @@ model CashTransactionEditAudit {
   @@map("cash_transaction_edit_audits")
 }
 
+model BusinessProfileDetails {
+  businessId String @id @map("business_id") @db.Char(36)
+  displayName String @default("") @map("display_name") @db.VarChar(150)
+  contactEmail String @default("") @map("contact_email") @db.VarChar(191)
+  address String @default("") @db.VarChar(350)
+  version Int @default(0) @db.UnsignedInt
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_profile_details_business")
+
+  @@map("business_profile_details")
+}
+
+model BusinessProfileEditAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  editedByUserId String @map("edited_by_user_id") @db.Char(36)
+  oldVersion Int @map("old_version") @db.UnsignedInt
+  newVersion Int @map("new_version") @db.UnsignedInt
+  oldProfile Json @map("old_profile")
+  newProfile Json @map("new_profile")
+  editedAt DateTime @default(now()) @map("edited_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_profile_audit_business")
+  editedBy User @relation(fields: [editedByUserId], references: [id], onDelete: Restrict, map: "fk_profile_audit_actor")
+
+  @@unique([businessId, newVersion], map: "uq_profile_revision")
+  @@index([businessId, editedAt], map: "idx_profile_audit_business_time")
+  @@map("business_profile_edit_audits")
+}
+
 model ArchivedReportSnapshot {
   id String @id @default(uuid()) @db.Char(36)
   businessId String @map("business_id") @db.Char(36)
@@ -341,6 +372,7 @@ model User {
   generatedReportSnapshots ArchivedReportSnapshot[]
   createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
   editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
+  businessProfileEdits BusinessProfileEditAudit[]
 
   @@map("users")
 }
@@ -363,6 +395,8 @@ model Business {
   paymentTransactions  PlatformPaymentTransaction[]
   archivedReportSnapshots ArchivedReportSnapshot[]
   cashTransactions CashTransaction[]
+  profileDetails BusinessProfileDetails?
+  profileEditAudits BusinessProfileEditAudit[]
   promotionRedemptions PromotionRedemption[]
   legalAcceptances RegistrationLegalAcceptance[]
   identityOfferClaims IdentityOfferClaim[]
