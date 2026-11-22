@@ -46,7 +46,7 @@ before(async () => {
   assert.match(String(versions[0]?.version), /^8\.4\./);
   assert.equal(versions[0]?.database_name, "noteto_dev");
   const migrations = await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
-  assert.equal(Number(migrations[0]?.n), 19);
+  assert.equal(Number(migrations[0]?.n), 20);
   await db.execute(
     "INSERT INTO permissions (id, `key`, description) VALUES (?, 'reports.read', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
     [uid()]
