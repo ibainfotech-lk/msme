@@ -189,6 +189,9 @@ jobs:
       - name: Verify F17 cash-basis income, expense, RBAC, pagination and audited corrections
         run: npm run test:mysql-core-cashbook
 
+      - name: Verify F17.2 monthly invoice quota, idempotency and no phantom cash posting
+        run: npm run test:mysql-invoice-issuance
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
