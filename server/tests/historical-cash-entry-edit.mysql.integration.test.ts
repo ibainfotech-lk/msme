@@ -1,5 +1,6 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import mysql, { type RowDataPacket } from "mysql2/promise";
@@ -8,6 +9,7 @@ import {
   editHistoricalCashEntry, HistoricalEntryEditError,
   type HistoricalEntryEditInput,
 } from "../src/modules/transactions/historical-cash-entry-edit.service";
+import { listPreviousEntries, listPreviouslyGeneratedReports, HeldHistoryError } from "../src/modules/subscriptions/held-history-list.service";
 
 /* DESTRUCTIVE FIXTURES: DISPOSABLE GitHub Actions MySQL 8.4 only. */
 const guard =
@@ -24,6 +26,7 @@ const guard =
   process.env.DB_PASSWORD === "ci_dummy_unused_password";
 if (!guard) throw Error("STOP: Historical edit fixtures require disposable MySQL 8.4 CI.");
 process.env.NOTETO_HISTORICAL_EDIT_ENABLED = "true";
+process.env.NOTETO_HOLD_HISTORY_API_ENABLED = "true";
 const db = mysql.createPool({
   host: "127.0.0.1", port: 3307, user: "noteto_services",
   password: "ci_dummy_unused_password", database: "noteto_dev",
@@ -75,7 +78,7 @@ async function fixture(options: {
       [roleId, businessId]
     );
     await con.execute(
-      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` = 'transactions.update'",
+      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` IN ('transactions.update','transactions.read','reports.read')",
       [roleId]
     );
     await con.execute(
@@ -233,6 +236,98 @@ test("production mode disables edits before DB connection",async()=>{
     await assert.rejects(
       ()=>editHistoricalCashEntry(editInput(f),async()=>{throw Error("UNEXPECTED_DB");}),
       err("HISTORICAL_EDIT_DISABLED")
+    );
+  }finally {process.env.NODE_ENV="development";}
+});
+
+
+test("held history lists only transactions created before the trusted hold",async()=>{
+  const f=await fixture();
+  await db.execute(
+    ["INSERT INTO cash_transactions",
+     "(id,business_id,created_by_user_id,transaction_type,amount_lkr,category,description,occurred_on,created_at,updated_at,version)",
+     "VALUES (?,?,?,'EXPENSE',150.00,'Supplies','Backdated but created after hold','2026-10-10','2026-11-02 12:00:00.000',UTC_TIMESTAMP(3),1)"].join(" "),
+    [uid(),f.businessId,f.userId]
+  );
+  const history=await listPreviousEntries({businessId:f.businessId,userId:f.userId});
+  assert.equal(history.mode,"HOLD");
+  assert.equal(history.items.length,1);
+  assert.equal(history.items[0].id,f.entryId);
+  assert.equal(history.items[0].type,"INCOME");
+  assert.equal(history.newEntryAllowed,false);
+  assert.equal(history.reportGenerationAllowed,false);
+});
+
+test("report list exposes only saved snapshots generated on/before the hold",async()=>{
+  const f=await fixture();
+  const [subs]=await db.execute<Row[]>(
+    "SELECT current_subscription_id AS token FROM businesses WHERE id = ?",[f.businessId]
+  );
+  const subscriptionId=String(subs[0].token);
+  const bytes=Buffer.from("%PDF-1.4\nArchived CI\n%%EOF");
+  const checksum=createHash("sha256").update(bytes).digest("hex");
+  const oldId=uid(),newId=uid();
+  for(const [reportId,generatedAt] of [
+    [oldId,"2026-10-31 12:00:00.000"],
+    [newId,"2026-11-02 12:00:00.000"],
+  ]) {
+    await db.execute(
+      ["INSERT INTO archived_report_snapshots",
+       "(id,business_id,subscription_id,generated_by_user_id,report_type,period_start,period_end,content_sha256,content_length,pdf_bytes,generated_at)",
+       "VALUES (?,?,?,?,'DAILY','2026-10-01','2026-10-01',?,?,?,?)"].join(" "),
+      [reportId,f.businessId,subscriptionId,f.userId,checksum,bytes.length,bytes,generatedAt]
+    );
+  }
+  const history=await listPreviouslyGeneratedReports({businessId:f.businessId,userId:f.userId});
+  assert.equal(history.mode,"HOLD");
+  assert.deepEqual(history.items.map(x=>x.id),[oldId]);
+  assert.equal(history.reportGenerationAllowed,false);
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM archived_report_snapshots WHERE business_id = ?",[f.businessId]))[0]?.n),2);
+});
+
+test("history listings enforce tenant permissions",async()=>{
+  const a=await fixture(),b=await fixture();
+  await assert.rejects(
+    ()=>listPreviousEntries({businessId:a.businessId,userId:b.userId}),
+    (e:unknown)=>{
+      assert.ok(e instanceof HeldHistoryError);
+      assert.equal(e.code,"HISTORY_PERMISSION_DENIED");
+      return true;
+    }
+  );
+});
+
+test("missing reviewed hold timestamp fails closed for previous-entry listing",async()=>{
+  const f=await fixture({heldAt:null});
+  await assert.rejects(
+    ()=>listPreviousEntries({businessId:f.businessId,userId:f.userId}),
+    (e:unknown)=>{
+      assert.ok(e instanceof HeldHistoryError);
+      assert.equal(e.code,"REVIEWED_HOLD_TIMESTAMP_REQUIRED");
+      return true;
+    }
+  );
+});
+
+test("active accounts may list existing records without creating new ones",async()=>{
+  const f=await fixture({subscriptionStatus:"ACTIVE",heldAt:null});
+  const history=await listPreviousEntries({businessId:f.businessId,userId:f.userId});
+  assert.equal(history.mode,"FULL");
+  assert.equal(history.items.length,1);
+  assert.equal(history.newEntryAllowed,false);
+});
+
+test("production guard rejects held history listing before DB connection",async()=>{
+  const f=await fixture();
+  try {
+    process.env.NODE_ENV="production";
+    await assert.rejects(
+      ()=>listPreviousEntries({businessId:f.businessId,userId:f.userId},async()=>{throw Error("UNEXPECTED_DB");}),
+      (e:unknown)=>{
+        assert.ok(e instanceof HeldHistoryError);
+        assert.equal(e.code,"HOLD_HISTORY_DISABLED");
+        return true;
+      }
     );
   }finally {process.env.NODE_ENV="development";}
 });
