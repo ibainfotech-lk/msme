@@ -71,7 +71,7 @@ export function calculateSubscriptionAccessMode(state: SubscriptionAccessState):
   if (!state.hasAuthorizedMembership) return "LOCKED";
 
   // PAST_DUE is a review-approved hold; it does not revoke the user account.
-  if ((state.businessStatus === "ACTIVE" || state.businessStatus === "SUSPENDED") &&
+  if (state.businessStatus === "ACTIVE" &&
       state.currentSubscriptionStatus === "PAST_DUE") return "HOLD";
 
   if (state.businessStatus === "ACTIVE" &&
