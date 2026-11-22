@@ -47,6 +47,7 @@ interface SubscriptionRow extends RowDataPacket {
   held_at: Date | null;
 }
 interface RoleRow extends RowDataPacket { allowed: number }
+interface MarkerRow extends RowDataPacket { token: string }
 interface ExistingRow extends RowDataPacket {
   id: string;
   subscription_id: string;
@@ -71,6 +72,11 @@ export async function recordHoldReviewCandidate(
       process.env.RUNNER_OS !== "Linux" ||
       process.env.GITHUB_REPOSITORY !== "ibainfotech-lk/msme" ||
       process.env.NOTETO_CI_DISPOSABLE_DB !== "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE" ||
+      process.env.DB_HOST !== "127.0.0.1" ||
+      process.env.DB_PORT !== "3307" ||
+      process.env.DB_NAME !== "noteto_dev" ||
+      process.env.DB_USER !== "noteto_services" ||
+      process.env.DB_PASSWORD !== "ci_dummy_unused_password" ||
       process.env.NOTETO_HOLD_REVIEW_JOURNAL_ENABLED !== "true") {
     throw new HoldReviewJournalError("HOLD_REVIEW_JOURNAL_DISABLED", 403);
   }
@@ -115,6 +121,12 @@ export async function recordHoldReviewCandidate(
   try {
     await connection.beginTransaction();
     inTransaction = true;
+    const [marker] = await connection.execute<MarkerRow[]>(
+      "SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1"
+    );
+    if (marker[0]?.token !== "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE") {
+      throw new HoldReviewJournalError("DISPOSABLE_DATABASE_MARKER_REQUIRED", 403);
+    }
 
     // Serialize all review attempts for a business; this must not be
     // confused with any approval to change subscription status.
