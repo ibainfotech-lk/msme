@@ -53,6 +53,10 @@ interface DbRow extends RowDataPacket {
   status?: string;
   amount_lkr?: string;
   current_subscription_id?: string | null;
+  terms_version?: string;
+  privacy_notice_version?: string;
+  acceptance_language?: string;
+  accepted_at?: Date;
 }
 
 async function query(sql: string, values: unknown[] = []): Promise<DbRow[]> {
