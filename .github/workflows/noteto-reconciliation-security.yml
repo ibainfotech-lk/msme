@@ -186,6 +186,9 @@ jobs:
       - name: Verify reviewed hold journal and no automatic state changes in disposable MySQL
         run: npm run test:mysql-hold-review-journal
 
+      - name: Verify F17 cash-basis income, expense, RBAC, pagination and audited corrections
+        run: npm run test:mysql-core-cashbook
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
