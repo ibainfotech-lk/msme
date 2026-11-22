@@ -220,6 +220,36 @@ model SubscriptionDueAllocation {
   @@map("subscription_due_allocations")
 }
 
+enum ArchivedReportType {
+  DAILY
+  WEEKLY
+  YEARLY
+}
+
+model ArchivedReportSnapshot {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  generatedByUserId String @map("generated_by_user_id") @db.Char(36)
+  reportType ArchivedReportType @map("report_type")
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd DateTime @map("period_end") @db.Date
+  contentType String @default("application/pdf") @map("content_type") @db.VarChar(40)
+  contentSha256 String @map("content_sha256") @db.Char(64)
+  contentLength Int @map("content_length") @db.UnsignedInt
+  pdfBytes Bytes @map("pdf_bytes") @db.MediumBlob
+  generatedAt DateTime @map("generated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_report_archive_business")
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_report_archive_subscription_tenant")
+  generatedBy User @relation(fields: [generatedByUserId], references: [id], onDelete: Restrict, map: "fk_report_archive_generator")
+
+  @@unique([businessId, id], map: "uq_report_archive_tenant_id")
+  @@index([businessId, generatedAt], map: "idx_report_archive_business_generated")
+  @@index([subscriptionId, generatedAt], map: "idx_report_archive_subscription_generated")
+  @@map("archived_report_snapshots")
+}
+
 model RegistrationLegalAcceptance {
   id String @id @default(uuid()) @db.Char(36)
   userId String @map("user_id") @db.Char(36)
@@ -255,6 +285,7 @@ model User {
   sentInvitations     BusinessInvitation[] @relation("InvitationSender")
   acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptor")
   legalAcceptances RegistrationLegalAcceptance[]
+  generatedReportSnapshots ArchivedReportSnapshot[]
 
   @@map("users")
 }
@@ -275,6 +306,7 @@ model Business {
   subscriptions        BusinessSubscription[]       @relation("BusinessSubscriptionHistory")
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
+  archivedReportSnapshots ArchivedReportSnapshot[]
   promotionRedemptions PromotionRedemption[]
   legalAcceptances RegistrationLegalAcceptance[]
   identityOfferClaims IdentityOfferClaim[]
@@ -426,6 +458,8 @@ model BusinessSubscription {
   entitlements SubscriptionEntitlement[]
   events       SubscriptionEvent[]
   monthlyDues  SubscriptionMonthlyDue[]
+  archivedReportSnapshots ArchivedReportSnapshot[]
+  heldAt DateTime? @map("held_at") @db.DateTime(3)
 
   // One verified platform payment may activate at most one subscription.
   activationPaymentId String? @unique @map("activation_payment_id") @db.Char(36)
