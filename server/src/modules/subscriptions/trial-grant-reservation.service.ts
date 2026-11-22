@@ -177,6 +177,14 @@ export async function reserveIntroductoryTrial(
           order.status !== "CANCELLED") {
         throw new TrialReservationError("TRIAL_ALREADY_GRANTED");
       }
+      const [offerClaims] = await connection.execute<RowDataPacket[]>(
+        "SELECT business_id, offer_kind, reservation_id FROM identity_offer_claims WHERE identity_fingerprint = ? LIMIT 1",
+        [identity.identity_fingerprint]
+      );
+      if (offerClaims.length !== 1 || offerClaims[0].business_id !== input.businessId ||
+          offerClaims[0].offer_kind !== "TRIAL" || offerClaims[0].reservation_id !== grant.id) {
+        throw new TrialReservationError("OFFER_CLAIM_INCONSISTENT");
+      }
       await connection.commit();
       started = false;
       return { grantId: grant.id, businessId: input.businessId,
@@ -236,6 +244,14 @@ export async function reserveIntroductoryTrial(
        "(id, business_id, identity_fingerprint, checkout_order_id, status, created_at)",
        "VALUES (?, ?, ?, ?, 'RESERVED', UTC_TIMESTAMP(3))"].join(" "),
       [grantId, input.businessId, identity.identity_fingerprint, input.checkoutOrderId]
+    );
+    // Unique identity claim is shared with promotional reservations.
+    // This prevents concurrent TRIAL vs PROMOTION grants across businesses.
+    await connection.execute(
+      ["INSERT INTO identity_offer_claims",
+       "(identity_fingerprint, business_id, offer_kind, reservation_id, created_at)",
+       "VALUES (?, ?, 'TRIAL', ?, UTC_TIMESTAMP(3))"].join(" "),
+      [identity.identity_fingerprint, input.businessId, grantId]
     );
 
     const [updated] = await connection.execute<ResultSetHeader>(

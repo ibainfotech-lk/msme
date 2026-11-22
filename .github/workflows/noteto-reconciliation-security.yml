@@ -153,6 +153,9 @@ jobs:
       - name: Verify guarded trial reservations against disposable MySQL
         run: npm run test:mysql-trial-reservation
 
+      - name: Verify guarded promotional reservations against disposable MySQL
+        run: npm run test:mysql-promotion-reservation
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04

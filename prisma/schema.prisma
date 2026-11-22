@@ -46,6 +46,30 @@ model IntroductoryTrialGrant {
   @@map("introductory_trial_grants")
 }
 
+enum IdentityOfferKind {
+  TRIAL
+  PROMOTION
+}
+
+// One identity can reserve at most one free offer, across trial and promotion.
+model IdentityOfferClaim {
+  identityFingerprint String @id @map("identity_fingerprint") @db.Char(64)
+  businessId String @map("business_id") @db.Char(36)
+  offerKind IdentityOfferKind @map("offer_kind")
+  reservationId String @map("reservation_id") @db.Char(36)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_offer_claim_business")
+  @@unique([offerKind, reservationId], map: "uq_offer_kind_reservation")
+  @@index([businessId], map: "idx_offer_claim_business")
+  @@map("identity_offer_claims")
+}
+
+enum PromotionRedemptionStatus {
+  RESERVED
+  APPLIED
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -184,6 +208,7 @@ model Business {
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
   promotionRedemptions PromotionRedemption[]
+  identityOfferClaims IdentityOfferClaim[]
   verifiedIdentity VerifiedBusinessIdentity?
   introductoryTrialGrant IntroductoryTrialGrant?
   currentSubscription  BusinessSubscription?        @relation("CurrentBusinessSubscription", fields: [id, currentSubscriptionId], references: [businessId, id], onDelete: Restrict)
@@ -368,6 +393,7 @@ model CheckoutOrder {
 
   payments PlatformPaymentTransaction[]
   introductoryTrialGrant IntroductoryTrialGrant?
+  promotionRedemption PromotionRedemption?
 
   @@unique([businessId, id])
   @@index([businessId, status])
@@ -468,13 +494,19 @@ model PromotionRedemption {
   businessId      String @map("business_id") @db.Char(36)
 
   freeMonthsGranted Int @map("free_months_granted")
+  // NULL only for legacy entries not yet linked to a reviewed identity.
+  identityFingerprint String? @unique(map: "uq_promo_identity") @map("identity_fingerprint") @db.Char(64)
+  checkoutOrderId String? @map("checkout_order_id") @db.Char(36)
+  reservationStatus PromotionRedemptionStatus @default(APPLIED) @map("reservation_status")
 
   redeemedAt DateTime @default(now()) @map("redeemed_at")
 
   promotionCode PromotionCode @relation(fields: [promotionCodeId], references: [id], onDelete: Restrict)
   business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  checkoutOrder CheckoutOrder? @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_promo_checkout_tenant")
 
   @@unique([promotionCodeId, businessId])
+  @@unique([businessId, checkoutOrderId], map: "uq_promo_checkout_tenant")
   @@index([businessId, redeemedAt])
   @@map("promotion_redemptions")
 }

@@ -35,6 +35,19 @@ async function rejectReservedTrial(connection: PoolConnection, businessId: strin
     }
 }
 
+// A pending promotional reservation consumes quota but does not grant access.
+// Never allow the original cancelled checkout to be replaced automatically.
+async function rejectReservedPromotion(connection: PoolConnection, businessId: string): Promise<void> {
+    if (process.env.NOTETO_PROMOTION_RESERVATIONS_ENABLED !== "true") return;
+    const [rows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id FROM promotion_redemptions WHERE business_id = ? AND reservation_status = 'RESERVED' LIMIT 1",
+        [businessId]
+    );
+    if (rows.length !== 0) {
+        throw new CheckoutError(409, "PROMOTION_RESERVATION_PENDING", "Complete promotion verification before starting a new checkout.");
+    }
+}
+
 export interface CreateCheckoutOrderInput {
     businessId: string;
     userId: string;
@@ -109,6 +122,7 @@ async function recoverDuplicateOrder(
         }
 
         await rejectReservedTrial(connection, input.businessId);
+        await rejectReservedPromotion(connection, input.businessId);
 
         const [rows] = await connection.execute<AuthorizationRow[]>(
             `SELECT 1 AS authorized
@@ -205,6 +219,7 @@ export async function createCheckoutOrder(
         }
 
         await rejectReservedTrial(connection, input.businessId);
+        await rejectReservedPromotion(connection, input.businessId);
 
         // Recheck authorization within the transaction.
         const [authorizationRows] =

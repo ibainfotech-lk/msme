@@ -46,7 +46,7 @@ before(async () => {
   assert.match(String(version[0]?.version), /^8\.4\./);
   assert.equal(version[0]?.database_name, "noteto_dev");
   const migration = await query("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
-  assert.equal(Number(migration[0]?.n), 11);
+  assert.equal(Number(migration[0]?.n), 12);
   await db.execute(
     "INSERT INTO permissions (id, `key`, description) VALUES (?, 'billing.manage', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
     [randomUUID()]
@@ -161,6 +161,8 @@ test("verified reservation cancels unpaid order but never activates subscription
   assert.equal(business[0].current_subscription_id, null);
   assert.equal(Number(subs[0]?.n), 0);
   assert.equal(Number(payments[0]?.n), 0);
+  const claims = await query("SELECT COUNT(*) AS n FROM identity_offer_claims WHERE identity_fingerprint = ?", [f.fingerprint]);
+  assert.equal(Number(claims[0]?.n), 1);
 });
 
 test("same verified identity cannot reserve twice across different businesses", async () => {
