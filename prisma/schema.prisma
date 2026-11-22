@@ -344,6 +344,41 @@ model SubscriptionHoldReviewJournal {
   @@map("subscription_hold_review_journal")
 }
 
+enum HoldNoticeChannel {
+  SMS
+  EMAIL
+  WHATSAPP
+}
+
+enum HoldNoticeProvenance {
+  UNVERIFIED
+  VERIFIED
+}
+
+model SubscriptionHoldNoticeReceipt {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  provider String @db.VarChar(60)
+  deliveryChannel HoldNoticeChannel @map("delivery_channel")
+  providerDeliveryReference String @map("provider_delivery_reference") @db.VarChar(191)
+  providerEventSha256 String @map("provider_event_sha256") @db.Char(64)
+  noticeTemplateVersion String @map("notice_template_version") @db.VarChar(40)
+  termsVersion String @map("terms_version") @db.VarChar(40)
+  billingStatementSha256 String @map("billing_statement_sha256") @db.Char(64)
+  deliveredAt DateTime @map("delivered_at") @db.DateTime(3)
+  verifiedAt DateTime? @map("verified_at") @db.DateTime(3)
+  graceEndsAt DateTime @map("grace_ends_at") @db.DateTime(3)
+  provenanceStatus HoldNoticeProvenance @default(UNVERIFIED) @map("provenance_status")
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_hold_notice_subscription_tenant")
+
+  @@unique([provider, providerDeliveryReference], map: "uq_hold_notice_provider_delivery")
+  @@index([businessId, subscriptionId, deliveredAt], map: "idx_hold_notice_business_time")
+  @@map("subscription_hold_notice_receipts")
+}
+
 model ArchivedReportSnapshot {
   id String @id @default(uuid()) @db.Char(36)
   businessId String @map("business_id") @db.Char(36)
@@ -584,6 +619,7 @@ model BusinessSubscription {
   events       SubscriptionEvent[]
   monthlyDues  SubscriptionMonthlyDue[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
+  holdNoticeReceipts SubscriptionHoldNoticeReceipt[]
   archivedReportSnapshots ArchivedReportSnapshot[]
   heldAt DateTime? @map("held_at") @db.DateTime(3)
 
