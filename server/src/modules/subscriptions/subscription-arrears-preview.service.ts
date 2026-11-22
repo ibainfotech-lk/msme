@@ -53,6 +53,9 @@ interface AllocationRow extends RowDataPacket {
   payment_total_allocated_lkr: string;
   payment_status: string;
   payment_verified_at: Date | null;
+  gateway_transaction_id: string | null;
+  checkout_status: string;
+  initiation_status: string;
 }
 
 type ConnectionFactory = () => Promise<PoolConnection>;
@@ -140,6 +143,8 @@ export async function previewMonthlySubscriptionArrears(
         "SELECT a.monthly_due_id, a.payment_id, a.amount_lkr,",
         "p.amount_lkr AS payment_amount_lkr, p.status AS payment_status,",
         "p.verified_at AS payment_verified_at,",
+        "p.gateway_transaction_id, p.initiation_status,",
+        "co.status AS checkout_status,",
         "(SELECT COALESCE(SUM(a2.amount_lkr), 0.00) FROM subscription_due_allocations a2",
         "WHERE a2.business_id = a.business_id AND a2.payment_id = a.payment_id)",
         "AS payment_total_allocated_lkr",
@@ -148,6 +153,8 @@ export async function previewMonthlySubscriptionArrears(
         "ON d.id = a.monthly_due_id AND d.business_id = a.business_id",
         "JOIN platform_payment_transactions p",
         "ON p.id = a.payment_id AND p.business_id = a.business_id",
+        "JOIN checkout_orders co ON co.id = p.checkout_order_id",
+        "AND co.business_id = p.business_id",
         "WHERE d.business_id = ? AND d.subscription_id = ?",
       ].join(" "),
       [input.businessId, subscription.id]
@@ -155,6 +162,13 @@ export async function previewMonthlySubscriptionArrears(
 
     const allocations = new Map<string, VerifiedDueAllocation[]>();
     for (const row of allocationRows) {
+      if (input.requireCurrentHold &&
+          (row.checkout_status !== "PAID" ||
+           row.initiation_status !== "INITIATED" ||
+           typeof row.gateway_transaction_id !== "string" ||
+           row.gateway_transaction_id.length === 0)) {
+        throw new ArrearsPreviewError("PAYMENT_ALLOCATION_RECONCILIATION_REQUIRED");
+      }
       const list = allocations.get(row.monthly_due_id) ?? [];
       list.push({
         paymentId: row.payment_id,
