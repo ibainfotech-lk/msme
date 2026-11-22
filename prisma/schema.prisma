@@ -276,7 +276,7 @@ model SalesInvoice {
   requestSha256 String @map("request_sha256") @db.Char(64)
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_sales_invoice_business")
   subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_sales_invoice_subscription_tenant")
   createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_sales_invoice_creator")
   lines SalesInvoiceLine[]
