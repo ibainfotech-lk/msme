@@ -61,7 +61,7 @@ before(async () => {
   const migrations = await query(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
   );
-  assert.equal(Number(migrations[0]?.n), 12);
+  assert.equal(Number(migrations[0]?.n), 13);
   await db.execute(
     "INSERT INTO permissions (id, `key`, description) VALUES (?, 'billing.manage', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
     [randomUUID()]
