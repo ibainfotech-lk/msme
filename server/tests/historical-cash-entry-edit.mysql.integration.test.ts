@@ -562,3 +562,85 @@ test("hold profile is disabled in production even before any DB access", async (
     );
   } finally { process.env.NODE_ENV = "development"; }
 });
+
+test("profile HTTP endpoint requires session, same origin and strict editable fields", async () => {
+  const f = await fixture();
+  const nonce = uid();
+  const app = express();
+  app.use(express.json({ limit: "20kb" }));
+  app.use(session({
+    name: "noteto.sid", secret: "noteto-ci-disposable-profile-session-secret",
+    resave: false, saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: "lax" },
+  }));
+  app.post("/__ci/profile-login", (req, res, next) => {
+    if (req.get("X-CI-Nonce") !== nonce) { res.sendStatus(403); return; }
+    req.session.userId = f.userId;
+    req.session.save(error => error ? next(error) : res.json({ success: true }));
+  });
+  app.use("/api/hold-history", heldHistoryRouter);
+  const server = createServer(app);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const origin = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+    const url = origin + "/api/hold-history/businesses/" + f.businessId + "/profile";
+    assert.equal((await fetch(url)).status, 401);
+    const login = await fetch(origin + "/__ci/profile-login", {
+      method: "POST", headers: { "X-CI-Nonce": nonce },
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie);
+    const profile = await fetch(url, { headers: { Cookie: cookie } });
+    assert.equal(profile.status, 200);
+    const profileData = await profile.json() as {
+      mode: string; version: number; businessLegalName: string;
+    };
+    assert.equal(profileData.mode, "HOLD");
+    assert.equal(profileData.version, 0);
+    const patch = {
+      expectedVersion: 0, fullName: "Edited via HTTP",
+      preferredLanguage: "si", displayName: "Public Contact Name",
+      contactEmail: "shop@example.lk", address: "Northern Province",
+    };
+    const missingOrigin = await fetch(url, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    assert.equal(missingOrigin.status, 403);
+    const foreignOrigin = await fetch(url, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json", Origin: "https://evil.example" },
+      body: JSON.stringify(patch),
+    });
+    assert.equal(foreignOrigin.status, 403);
+    const illegal = await fetch(url, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify({ ...patch, registrationType: "PRIVATE_LIMITED", status: "ACTIVE" }),
+    });
+    assert.equal(illegal.status, 400);
+    const correct = await fetch(url, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify(patch),
+    });
+    assert.equal(correct.status, 200);
+    const result = await correct.json() as { success: boolean; version: number };
+    assert.equal(result.success, true);
+    assert.equal(result.version, 1);
+    const audits = await rows(
+      "SELECT COUNT(*) AS n FROM business_profile_edit_audits WHERE business_id = ?", [f.businessId]
+    );
+    assert.equal(Number(audits[0]?.n), 1);
+    const business = await rows("SELECT name AS token, status FROM businesses WHERE id = ?", [f.businessId]);
+    assert.equal(String(business[0]?.token), profileData.businessLegalName);
+    assert.equal(String(business[0]?.status), "ACTIVE");
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
