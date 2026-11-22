@@ -24,6 +24,9 @@ CREATE TABLE `sales_invoices` (
   UNIQUE KEY `uq_sales_invoice_month_sequence` (`business_id`, `billing_month`, `invoice_sequence`),
   UNIQUE KEY `uq_sales_invoice_business_idempotency` (`business_id`, `idempotency_key`),
   KEY `idx_sales_invoice_business_issued` (`business_id`, `created_at`, `id`),
+  CONSTRAINT `fk_sales_invoice_business`
+    FOREIGN KEY (`business_id`) REFERENCES `businesses`(`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_sales_invoice_subscription_tenant`
     FOREIGN KEY (`business_id`, `subscription_id`)
     REFERENCES `business_subscriptions`(`business_id`, `id`)
