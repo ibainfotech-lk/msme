@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { evaluateBusinessHoldCapability, SubscriptionHoldAccessError } from "./subscription-hold-access.service";
 import { z } from "zod";
 import { requireAuth } from "../../middleware/auth.middleware";
 import { requireCheckoutOrigin } from "../../middleware/checkout-origin.middleware";
@@ -36,7 +37,8 @@ const correction = z.strictObject({
 function respondWithError(error: unknown, res: import("express").Response, next: import("express").NextFunction) {
   if (error instanceof HeldHistoryError ||
       error instanceof HistoricalEntryEditError ||
-      error instanceof ArchivedReportError) {
+      error instanceof ArchivedReportError ||
+      error instanceof SubscriptionHoldAccessError) {
     res.status(error.statusCode).json({
       success: false, code: error.code,
     });
@@ -44,6 +46,29 @@ function respondWithError(error: unknown, res: import("express").Response, next:
   }
   next(error);
 }
+
+// Backend is the only authority for the current subscription access mode.
+// This route returns no payment or transaction side effects.
+router.get("/businesses/:businessId/access", async (req, res, next) => {
+  const route = ids.safeParse(req.params);
+  if (!route.success) {
+    res.status(400).json({ success: false, code: "INVALID_HOLD_POLICY_REFERENCE" });
+    return;
+  }
+  try {
+    const decision = await evaluateBusinessHoldCapability({
+      businessId: route.data.businessId,
+      userId: req.session.userId!,
+      capability: "VIEW_DASHBOARD",
+    });
+    if (!decision.allowed) {
+      res.status(403).json({ success: false, code: decision.code });
+      return;
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.json({ success: true, mode: decision.mode });
+  } catch (error) { respondWithError(error, res, next); }
+});
 
 router.get("/businesses/:businessId/entries", async (req, res, next) => {
   const route = ids.safeParse(req.params);
