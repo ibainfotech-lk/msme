@@ -426,3 +426,27 @@ test("verified payment history flag blocks statement before opening DB", async (
     process.env.NOTETO_VERIFIED_PAYMENT_HISTORY_READY = "true";
   }
 });
+
+test("held billing cannot count payment lacking settled checkout and gateway evidence", async () => {
+  const f = await fixture();
+  await markHeld(f);
+  const paymentId = uid();
+  await db.execute(
+    ["INSERT INTO platform_payment_transactions",
+     "(id, business_id, checkout_order_id, idempotency_key, gateway, amount_lkr, status,",
+     "initiation_status, verified_at, updated_at)",
+     "VALUES (?, ?, ?, ?, 'CI_MOCK', 200.00, 'SUCCEEDED', 'INITIATED', '2027-01-10 00:00:00.000', UTC_TIMESTAMP(3))"].join(" "),
+    [paymentId, f.businessId, f.checkoutOrderId, "ci_held_missing_gateway_" + uid()]
+  );
+  await db.execute(
+    ["INSERT INTO subscription_due_allocations",
+     "(id, business_id, monthly_due_id, payment_id, amount_lkr)",
+     "VALUES (?, ?, ?, ?, 200.00)"].join(" "),
+    [uid(), f.businessId, f.januaryDueId, paymentId]
+  );
+  await assert.rejects(() => heldStatement(f), (e: unknown) => {
+    assert.ok(e instanceof ArrearsPreviewError);
+    assert.equal(e.code, "PAYMENT_ALLOCATION_RECONCILIATION_REQUIRED");
+    return true;
+  });
+});
