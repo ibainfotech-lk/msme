@@ -1,0 +1,240 @@
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import mysql, { type RowDataPacket } from "mysql2/promise";
+import runtimePool from "../src/config/database";
+import {
+  previewMonthlySubscriptionArrears, ArrearsPreviewError,
+} from "../src/modules/subscriptions/subscription-arrears-preview.service";
+import { MonthlyArrearsError } from "../src/modules/subscriptions/subscription-arrears.policy";
+
+/* DESTRUCTIVE TEST FIXTURES: ONLY disposable GitHub Actions MySQL 8.4. */
+const allowed =
+  process.env.CI === "true" &&
+  process.env.GITHUB_ACTIONS === "true" &&
+  process.env.RUNNER_OS === "Linux" &&
+  process.env.GITHUB_REPOSITORY === "ibainfotech-lk/msme" &&
+  process.env.NODE_ENV === "development" &&
+  process.env.NOTETO_CI_DISPOSABLE_DB === "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE" &&
+  process.env.DB_HOST === "127.0.0.1" &&
+  process.env.DB_PORT === "3307" &&
+  process.env.DB_NAME === "noteto_dev" &&
+  process.env.DB_USER === "noteto_services" &&
+  process.env.DB_PASSWORD === "ci_dummy_unused_password";
+if (!allowed) throw new Error("STOP: Disposable GitHub Actions MySQL 8.4 only.");
+
+process.env.NOTETO_ARREARS_PREVIEW_ENABLED = "true";
+process.env.NOTETO_ARREARS_HISTORY_READY = "true";
+
+const db = mysql.createPool({
+  host: "127.0.0.1", port: 3307, database: "noteto_dev",
+  user: "noteto_services", password: "ci_dummy_unused_password",
+  timezone: "Z", decimalNumbers: false, connectionLimit: 5,
+});
+
+after(async () => { await db.end(); await runtimePool.end(); });
+
+interface Row extends RowDataPacket { n?: number; id?: string; status?: string; token?: string }
+async function rows(sql: string, values: unknown[] = []): Promise<Row[]> {
+  const [result] = await db.execute<Row[]>(sql, values);
+  return result;
+}
+
+before(async () => {
+  const marker = await rows("SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1");
+  assert.equal(marker[0]?.token, "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
+  const version = await rows("SELECT VERSION() AS version, DATABASE() AS database_name");
+  assert.match(String(version[0]?.version), /^8\.4\./);
+  assert.equal(version[0]?.database_name, "noteto_dev");
+  const migration = await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
+  assert.equal(Number(migration[0]?.n), 14);
+  await db.execute(
+    "INSERT INTO permissions (id, `key`, description) VALUES (?, 'billing.manage', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
+    [randomUUID()]
+  );
+});
+
+const asOf = new Date("2027-02-02T00:00:00.000Z");
+const uid = () => randomUUID();
+
+interface Fixture {
+  businessId: string;
+  userId: string;
+  subscriptionId: string;
+  checkoutOrderId: string;
+  januaryDueId: string;
+  februaryDueId: string;
+}
+
+async function fixture(includeFebruary = true): Promise<Fixture> {
+  const businessId = uid();
+  const userId = uid();
+  const roleId = uid();
+  const planId = uid();
+  const checkoutOrderId = uid();
+  const subscriptionId = uid();
+  const januaryDueId = uid();
+  const februaryDueId = uid();
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.execute(
+      "INSERT INTO users (id, phone, status, updated_at) VALUES (?, ?, 'ACTIVE', UTC_TIMESTAMP(3))",
+      [userId, "+9477" + String(Math.floor(Math.random() * 1e7)).padStart(7, "0")]
+    );
+    await connection.execute(
+      "INSERT INTO businesses (id, name, registration_type, status, updated_at) VALUES (?, 'CI ARREARS', 'SOLE_PROPRIETOR', 'ACTIVE', UTC_TIMESTAMP(3))",
+      [businessId]
+    );
+    await connection.execute(
+      "INSERT INTO roles (id, business_id, name, is_system_role, updated_at) VALUES (?, ?, 'OWNER', 1, UTC_TIMESTAMP(3))",
+      [roleId, businessId]
+    );
+    await connection.execute(
+      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` = 'billing.manage'",
+      [roleId]
+    );
+    await connection.execute(
+      "INSERT INTO business_memberships (id, business_id, user_id, role_id, status, updated_at) VALUES (?, ?, ?, ?, 'ACTIVE', UTC_TIMESTAMP(3))",
+      [uid(), businessId, userId, roleId]
+    );
+    await connection.execute(
+      ["INSERT INTO subscription_plans",
+       "(id, code, name, price_lkr, billing_interval, trial_days, invoice_limit, is_active, updated_at)",
+       "VALUES (?, ?, 'CI MONTHLY', 499.00, 'MONTHLY', 0, 30, 1, UTC_TIMESTAMP(3))"].join(" "),
+      [planId, "CI_AR_" + uid().replace(/-/g, "").toUpperCase()]
+    );
+    await connection.execute(
+      ["INSERT INTO checkout_orders",
+       "(id, business_id, plan_id, status, amount_lkr, idempotency_key, expires_at, updated_at)",
+       "VALUES (?, ?, ?, 'PAID', 499.00, ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))"].join(" "),
+      [checkoutOrderId, businessId, planId, "ci_ar_order_" + uid()]
+    );
+    await connection.execute(
+      ["INSERT INTO business_subscriptions",
+       "(id, business_id, plan_id, status, starts_at, updated_at)",
+       "VALUES (?, ?, ?, 'ACTIVE', '2026-12-31 18:30:00.000', UTC_TIMESTAMP(3))"].join(" "),
+      [subscriptionId, businessId, planId]
+    );
+    await connection.execute(
+      ["INSERT INTO subscription_monthly_dues",
+       "(id, business_id, subscription_id, billing_month, due_at, charge_lkr, waived_lkr, status)",
+       "VALUES (?, ?, ?, '2027-01-01', '2026-12-31 18:30:00.000', 499.00, 0.00, 'OPEN')"].join(" "),
+      [januaryDueId, businessId, subscriptionId]
+    );
+    if (includeFebruary) {
+      await connection.execute(
+        ["INSERT INTO subscription_monthly_dues",
+         "(id, business_id, subscription_id, billing_month, due_at, charge_lkr, waived_lkr, status)",
+         "VALUES (?, ?, ?, '2027-02-01', '2027-01-31 18:30:00.000', 499.00, 0.00, 'OPEN')"].join(" "),
+        [februaryDueId, businessId, subscriptionId]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  return { businessId, userId, subscriptionId, checkoutOrderId, januaryDueId, februaryDueId };
+}
+
+function preview(f: Fixture) {
+  return previewMonthlySubscriptionArrears({
+    businessId: f.businessId, subscriptionId: f.subscriptionId, userId: f.userId,
+    asOf,
+  });
+}
+
+test("two unpaid months quote LKR 998 without charging or activating anything", async () => {
+  const f = await fixture();
+  const quote = await preview(f);
+  assert.equal(quote.totalOutstandingLkr, "998.00");
+  assert.equal(quote.penaltyLkr, "0.00");
+  assert.equal(quote.paymentActionAllowed, false);
+  const paymentCount = await rows("SELECT COUNT(*) AS n FROM platform_payment_transactions WHERE business_id = ?", [f.businessId]);
+  assert.equal(Number(paymentCount[0]?.n), 0);
+});
+
+test("verified partial allocation reduces outstanding but no other month", async () => {
+  const f = await fixture();
+  const paymentId = uid();
+  await db.execute(
+    ["INSERT INTO platform_payment_transactions",
+     "(id, business_id, checkout_order_id, idempotency_key, gateway, amount_lkr, status,",
+     "initiation_status, verified_at, updated_at)",
+     "VALUES (?, ?, ?, ?, 'CI_MOCK', 200.00, 'SUCCEEDED', 'INITIATED', '2027-01-10 00:00:00.000', UTC_TIMESTAMP(3))"].join(" "),
+    [paymentId, f.businessId, f.checkoutOrderId, "ci_ar_payment_" + uid()]
+  );
+  await db.execute(
+    ["INSERT INTO subscription_due_allocations",
+     "(id, business_id, monthly_due_id, payment_id, amount_lkr)",
+     "VALUES (?, ?, ?, ?, 200.00)"].join(" "),
+    [uid(), f.businessId, f.januaryDueId, paymentId]
+  );
+  const quote = await preview(f);
+  assert.equal(quote.totalOutstandingLkr, "798.00");
+  assert.equal(quote.lines[0].verifiedPaidLkr, "200.00");
+});
+
+test("missing monthly history is rejected rather than silently under-billed", async () => {
+  const f = await fixture(false);
+  await assert.rejects(
+    () => preview(f),
+    (error: unknown) => {
+      assert.ok(error instanceof MonthlyArrearsError);
+      assert.equal(error.code, "BILLING_HISTORY_INCOMPLETE");
+      return true;
+    }
+  );
+});
+
+test("unique monthly due constraint prevents duplicate January charges", async () => {
+  const f = await fixture();
+  await assert.rejects(() => db.execute(
+    ["INSERT INTO subscription_monthly_dues",
+     "(id, business_id, subscription_id, billing_month, due_at, charge_lkr)",
+     "VALUES (?, ?, ?, '2027-01-01', '2026-12-31 18:30:00.000', 499.00)"].join(" "),
+    [uid(), f.businessId, f.subscriptionId]
+  ));
+  const count = await rows("SELECT COUNT(*) AS n FROM subscription_monthly_dues WHERE subscription_id = ?", [f.subscriptionId]);
+  assert.equal(Number(count[0]?.n), 2);
+});
+
+test("production runtime disables billing preview before opening DB", async () => {
+  const f = await fixture();
+  try {
+    process.env.NODE_ENV = "production";
+    await assert.rejects(
+      () => previewMonthlySubscriptionArrears({
+        businessId: f.businessId, userId: f.userId, subscriptionId: f.subscriptionId, asOf,
+      }, async () => { throw Error("UNEXPECTED_DB_CONNECTION"); }),
+      (error: unknown) => {
+        assert.ok(error instanceof ArrearsPreviewError);
+        assert.equal(error.code, "ARREARS_PREVIEW_DISABLED");
+        return true;
+      }
+    );
+  } finally { process.env.NODE_ENV = "development"; }
+});
+
+test("incomplete history flag disables preview before opening DB", async () => {
+  const f = await fixture();
+  try {
+    process.env.NOTETO_ARREARS_HISTORY_READY = "false";
+    await assert.rejects(
+      () => previewMonthlySubscriptionArrears({
+        businessId: f.businessId, userId: f.userId, subscriptionId: f.subscriptionId, asOf,
+      }, async () => { throw Error("UNEXPECTED_DB_CONNECTION"); }),
+      (error: unknown) => {
+        assert.ok(error instanceof ArrearsPreviewError);
+        assert.equal(error.code, "ARREARS_HISTORY_NOT_READY");
+        return true;
+      }
+    );
+  } finally { process.env.NOTETO_ARREARS_HISTORY_READY = "true"; }
+});
+console.log("INFO: Monthly arrears preview is read-only and tested against disposable CI MySQL.");
