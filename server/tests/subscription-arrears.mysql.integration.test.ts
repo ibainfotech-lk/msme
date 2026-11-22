@@ -5,7 +5,7 @@ import { after, before, test } from "node:test";
 import mysql, { type RowDataPacket } from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import {
-  previewMonthlySubscriptionArrears, ArrearsPreviewError,
+  previewMonthlySubscriptionArrears, previewCurrentHeldSubscriptionArrears, ArrearsPreviewError,
 } from "../src/modules/subscriptions/subscription-arrears-preview.service";
 import { MonthlyArrearsError } from "../src/modules/subscriptions/subscription-arrears.policy";
 import { previewCheckoutRecovery, CheckoutRecoveryPreviewError } from "../src/modules/checkout/checkout-recovery-preview.service";
@@ -27,6 +27,8 @@ if (!allowed) throw new Error("STOP: Disposable GitHub Actions MySQL 8.4 only.")
 
 process.env.NOTETO_ARREARS_PREVIEW_ENABLED = "true";
 process.env.NOTETO_ARREARS_HISTORY_READY = "true";
+process.env.NOTETO_HOLD_BILLING_STATEMENT_ENABLED = "true";
+process.env.NOTETO_VERIFIED_PAYMENT_HISTORY_READY = "true";
 process.env.NOTETO_CHECKOUT_RECOVERY_PREVIEW_ENABLED = "true";
 
 const db = mysql.createPool({
@@ -336,3 +338,91 @@ test("production guard rejects checkout inspection before DB connection", async 
 });
 
 console.log("INFO: Monthly arrears and checkout recovery previews are read-only; disposable CI MySQL only.");
+
+async function markHeld(f: Fixture, heldAt: string | null = "2027-01-05 00:00:00.000") {
+  await db.execute("UPDATE business_subscriptions SET status = 'PAST_DUE', held_at = ? WHERE id = ? AND business_id = ?",
+    [heldAt, f.subscriptionId, f.businessId]);
+  await db.execute("UPDATE businesses SET current_subscription_id = ? WHERE id = ?",
+    [f.subscriptionId, f.businessId]);
+}
+const heldStatement = (f: Fixture) => previewCurrentHeldSubscriptionArrears({
+  businessId: f.businessId, userId: f.userId, asOf,
+});
+
+test("held statement shows Jan and Feb LKR 998 with no payment created", async () => {
+  const f = await fixture();
+  await markHeld(f);
+  const q = await heldStatement(f);
+  assert.equal(q.totalOutstandingLkr, "998.00");
+  assert.deepEqual(q.lines.map(x => x.outstandingLkr), ["499.00", "499.00"]);
+  assert.equal(q.penaltyLkr, "0.00");
+  assert.equal(q.paymentActionAllowed, false);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM platform_payment_transactions WHERE business_id = ?", [f.businessId]
+  ))[0]?.n), 0);
+});
+test("held statement excludes waived introductory month", async () => {
+  const f = await fixture();
+  await markHeld(f);
+  await db.execute("UPDATE subscription_monthly_dues SET status='WAIVED', waived_lkr=499.00 WHERE id=?",
+    [f.januaryDueId]);
+  const q = await heldStatement(f);
+  assert.equal(q.totalOutstandingLkr, "499.00");
+  assert.equal(q.lines[0].outstandingLkr, "0.00");
+});
+test("hold statement refuses unreviewed or absent hold timestamp", async () => {
+  const f = await fixture();
+  await markHeld(f, null);
+  await assert.rejects(() => heldStatement(f), (e: unknown) => {
+    assert.ok(e instanceof ArrearsPreviewError);
+    assert.equal(e.code, "REVIEWED_HOLD_REQUIRED");
+    return true;
+  });
+});
+test("hold statement cannot be requested for active subscriptions", async () => {
+  const f = await fixture();
+  await db.execute("UPDATE businesses SET current_subscription_id = ? WHERE id = ?",
+    [f.subscriptionId, f.businessId]);
+  await assert.rejects(() => heldStatement(f), (e: unknown) => {
+    assert.ok(e instanceof ArrearsPreviewError);
+    assert.equal(e.code, "REVIEWED_HOLD_REQUIRED");
+    return true;
+  });
+});
+test("missing February ledger prevents presenting a misleading partial balance", async () => {
+  const f = await fixture(false);
+  await markHeld(f);
+  await assert.rejects(() => heldStatement(f), (e: unknown) => {
+    assert.ok(e instanceof MonthlyArrearsError);
+    assert.equal(e.code, "BILLING_HISTORY_INCOMPLETE");
+    return true;
+  });
+});
+test("another tenant cannot access held subscription statement", async () => {
+  const a = await fixture(), b = await fixture();
+  await markHeld(a);
+  await assert.rejects(
+    () => previewCurrentHeldSubscriptionArrears({
+      businessId: a.businessId, userId: b.userId, asOf,
+    }),
+    (e: unknown) => {
+      assert.ok(e instanceof ArrearsPreviewError);
+      assert.equal(e.code, "BILLING_PERMISSION_DENIED");
+      return true;
+    });
+});
+test("verified payment history flag blocks statement before opening DB", async () => {
+  const f = await fixture();
+  try {
+    process.env.NOTETO_VERIFIED_PAYMENT_HISTORY_READY = "false";
+    await assert.rejects(() => previewCurrentHeldSubscriptionArrears({
+      businessId: f.businessId, userId: f.userId, asOf,
+    }, async () => { throw Error("UNEXPECTED_DB"); }), (e: unknown) => {
+      assert.ok(e instanceof ArrearsPreviewError);
+      assert.equal(e.code, "HOLD_BILLING_STATEMENT_NOT_READY");
+      return true;
+    });
+  } finally {
+    process.env.NOTETO_VERIFIED_PAYMENT_HISTORY_READY = "true";
+  }
+});
