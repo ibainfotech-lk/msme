@@ -66,6 +66,9 @@ jobs:
       - name: Verify subscription hold-mode feature restrictions
         run: npm run test:subscription-hold-policy
 
+      - name: Verify held subscription lifecycle review and safe restoration policy
+        run: npm run test:subscription-hold-lifecycle
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
