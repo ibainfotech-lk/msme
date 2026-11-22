@@ -172,6 +172,54 @@ enum SubscriptionEventType {
   PROMOTION_APPLIED
 }
 
+enum MonthlyDueStatus {
+  OPEN
+  SETTLED
+  WAIVED
+  VOID
+}
+
+// Historical monthly obligations must be explicitly posted by a reviewed
+// billing process. No automatic charges are created by this model.
+model SubscriptionMonthlyDue {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  billingMonth DateTime @map("billing_month") @db.Date
+  dueAt DateTime @map("due_at") @db.DateTime(3)
+  chargeLkr Decimal @map("charge_lkr") @db.Decimal(12,2)
+  waivedLkr Decimal @default(0.00) @map("waived_lkr") @db.Decimal(12,2)
+  status MonthlyDueStatus @default(OPEN)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_monthly_due_subscription_tenant")
+  allocations SubscriptionDueAllocation[]
+
+  @@unique([subscriptionId, billingMonth], map: "uq_monthly_due_subscription_month")
+  @@unique([businessId, id], map: "uq_monthly_due_tenant_id")
+  @@index([businessId, dueAt, status], map: "idx_monthly_due_business_due")
+  @@map("subscription_monthly_dues")
+}
+
+// Allocation creation/settlement is NOT implemented in F.16.5.4a.
+// Tenant-safe composite FKs prevent crossing business boundaries.
+model SubscriptionDueAllocation {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  monthlyDueId String @map("monthly_due_id") @db.Char(36)
+  paymentId String @map("payment_id") @db.Char(36)
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12,2)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  monthlyDue SubscriptionMonthlyDue @relation(fields: [businessId, monthlyDueId], references: [businessId, id], onDelete: Restrict, map: "fk_due_allocation_due_tenant")
+  payment PlatformPaymentTransaction @relation(fields: [businessId, paymentId], references: [businessId, id], onDelete: Restrict, map: "fk_due_allocation_payment_tenant")
+
+  @@unique([monthlyDueId, paymentId], map: "uq_due_allocation_pair")
+  @@index([businessId, monthlyDueId], map: "idx_due_allocation_business_due")
+  @@index([businessId, paymentId], map: "idx_due_allocation_business_payment")
+  @@map("subscription_due_allocations")
+}
+
 model RegistrationLegalAcceptance {
   id String @id @default(uuid()) @db.Char(36)
   userId String @map("user_id") @db.Char(36)
@@ -377,6 +425,7 @@ model BusinessSubscription {
   plan         SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict)
   entitlements SubscriptionEntitlement[]
   events       SubscriptionEvent[]
+  monthlyDues  SubscriptionMonthlyDue[]
 
   // One verified platform payment may activate at most one subscription.
   activationPaymentId String? @unique @map("activation_payment_id") @db.Char(36)
@@ -453,7 +502,9 @@ model PlatformPaymentTransaction {
 
   reconciliationEvidence PaymentReconciliationEvidence[]
   activationSubscription BusinessSubscription? @relation("SubscriptionActivationPayment")
+  dueAllocations SubscriptionDueAllocation[]
 
+  @@unique([businessId, id], map: "uq_payment_business_id")
   @@unique([gateway, gatewayTransactionId])
   @@unique([gateway, gatewayOrderId], map: "uq_payment_gateway_order")
   @@index([businessId, status])
