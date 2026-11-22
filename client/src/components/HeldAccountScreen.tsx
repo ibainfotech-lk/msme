@@ -32,6 +32,23 @@ interface HistoryResponse<T> {
   newEntryAllowed: false;
   reportGenerationAllowed: false;
 }
+interface ArrearsLine {
+  billingMonth: string;
+  chargeLkr: string;
+  waivedLkr: string;
+  verifiedPaidLkr: string;
+  outstandingLkr: string;
+}
+interface VerifiedArrearsStatement {
+  success: true;
+  currency: "LKR";
+  asOf: string;
+  lines: ArrearsLine[];
+  totalOutstandingLkr: string;
+  penaltyLkr: string;
+  completeThroughMonth: string;
+  paymentActionAllowed: false;
+}
 interface PreviousEntryEdit {
   amountLkr: string;
   category: string;
@@ -53,7 +70,15 @@ const copy = {
     subtitle: "Your subscription needs payment review. You can still see your earlier records.",
     notice: "New income, expenses, invoices and reports are unavailable while the subscription is on hold.",
     dues: "Outstanding subscription charges",
-    duesNote: "Amounts must be verified by the billing service before payment. No bank payment is initiated here.",
+    duesNote: "Verified monthly charges only. No bank payment is initiated here.",
+    duesUnavailable: "Balance unavailable. Your billing history needs review; no amount is assumed.",
+    month: "Billing month",
+    verifiedPaid: "Verified payments",
+    remaining: "Amount due",
+    totalDue: "Total outstanding",
+    penalty: "Late penalty",
+    asOf: "Checked as of",
+    noDue: "No currently due monthly charges are recorded.",
     tabsEntries: "Previous entries",
     tabsReports: "Saved reports",
     previous: "Entries saved before your account was placed on hold",
@@ -91,7 +116,15 @@ const copy = {
     subtitle: "சந்தா கட்டண நிலை சரிபார்க்கப்பட வேண்டும். முந்தைய பதிவுகளைத் தொடர்ந்து பார்க்கலாம்.",
     notice: "சந்தா நிறுத்தத்தில் இருக்கும் போது புதிய வரவு, செலவு, விலைப்பட்டியல் அல்லது அறிக்கையை உருவாக்க முடியாது.",
     dues: "நிலுவை சந்தா தொகை",
-    duesNote: "கட்டணம் செலுத்தும் முன் நிலுவைத் தொகை சரிபார்க்கப்படும். இங்கு வங்கிக் கட்டணம் தொடங்கப்படாது.",
+    duesNote: "சரிபார்க்கப்பட்ட மாதாந்த நிலுவை மட்டுமே காட்டப்படுகிறது. இங்கு வங்கிக் கட்டணம் தொடங்கப்படாது.",
+    duesUnavailable: "நிலுவைத் தொகையைச் சரிபார்க்க முடியவில்லை. கட்டணப் பதிவுகள் ஆய்வு செய்யப்பட வேண்டும்.",
+    month: "கட்டண மாதம்",
+    verifiedPaid: "சரிபார்த்த கட்டணம்",
+    remaining: "நிலுவை",
+    totalDue: "மொத்த நிலுவை",
+    penalty: "தாமத அபராதம்",
+    asOf: "சரிபார்த்த தேதி",
+    noDue: "தற்போது செலுத்த வேண்டிய தொகை பதிவு செய்யப்படவில்லை.",
     tabsEntries: "முந்தைய பதிவுகள்",
     tabsReports: "சேமித்த அறிக்கைகள்",
     previous: "கணக்கு நிறுத்தத்திற்கு முன் சேமித்த பதிவுகள்",
@@ -129,7 +162,15 @@ const copy = {
     subtitle: "දායකත්ව ගෙවීම් තත්ත්වය සමාලෝචනය කළ යුතුය. පෙර වාර්තා බැලිය හැක.",
     notice: "නව ආදායම්, වියදම්, ඉන්වොයිසි සහ වාර්තා සෑදීම තාවකාලිකව අවහිර කර ඇත.",
     dues: "හිඟ දායකත්ව මුදල",
-    duesNote: "ගෙවීමට පෙර හිඟ මුදල සත්‍යාපනය කළ යුතුය. මෙතැනින් බැංකු ගෙවීමක් ඇරඹෙන්නේ නැත.",
+    duesNote: "සත්‍යාපිත මාසික හිඟ මුදල් පමණක් පෙන්වයි. මෙතැනින් බැංකු ගෙවීමක් සිදු නොවේ.",
+    duesUnavailable: "හිඟ මුදල ලබාගත නොහැක. ගෙවීම් ඉතිහාසය සමාලෝචනය කළ යුතුය.",
+    month: "බිල්පත් මාසය",
+    verifiedPaid: "සත්‍යාපිත ගෙවීම්",
+    remaining: "හිඟ මුදල",
+    totalDue: "මුළු හිඟ මුදල",
+    penalty: "ප්‍රමාද දඩය",
+    asOf: "පරීක්ෂා කළ දිනය",
+    noDue: "දැනට ගෙවිය යුතු මාසික ගාස්තු සටහන් වී නොමැත.",
     tabsEntries: "පෙර ඇතුළත් කිරීම්",
     tabsReports: "සුරකින ලද වාර්තා",
     previous: "ගිණුම සීමා කිරීමට පෙර සුරකින ලද ඇතුළත් කිරීම්",
@@ -194,6 +235,8 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
   const t = copy[language];
   const [entries, setEntries] = useState<PreviousEntry[]>([]);
   const [reports, setReports] = useState<PreviousReport[]>([]);
+  const [arrears, setArrears] = useState<VerifiedArrearsStatement | null>(null);
+  const [arrearsUnavailable, setArrearsUnavailable] = useState(true);
   const [tab, setTab] = useState<"entries" | "reports">("entries");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -210,6 +253,8 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
     setLoading(true);
     setError("");
     setMessage("");
+    setArrears(null);
+    setArrearsUnavailable(true);
     try {
       const [a, b] = await Promise.all([
         apiJson<HistoryResponse<PreviousEntry>>(root + "/entries"),
@@ -221,9 +266,28 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
       }
       setEntries(a.items);
       setReports(b.items);
+      // A billing error must never be displayed as LKR 0.00 or inferred
+      // from elapsed months. Continue to allow historical records safely.
+      try {
+        const verified = await apiJson<VerifiedArrearsStatement>(root + "/arrears");
+        if (verified.currency !== "LKR" ||
+            verified.paymentActionAllowed !== false ||
+            typeof verified.totalOutstandingLkr !== "string" ||
+            !/^(?:0|[1-9][0-9]*)\\.[0-9]{2}$/.test(verified.totalOutstandingLkr) ||
+            !Array.isArray(verified.lines)) {
+          throw new Error("UNVERIFIED_BILLING_STATEMENT");
+        }
+        setArrears(verified);
+        setArrearsUnavailable(false);
+      } catch {
+        setArrears(null);
+        setArrearsUnavailable(true);
+      }
     } catch (cause) {
       setEntries([]);
       setReports([]);
+      setArrears(null);
+      setArrearsUnavailable(true);
       const code = cause instanceof Error ? cause.message : "";
       setError(code === "SUBSCRIPTION_ACCESS_CHANGED" ? t.sessionChanged : t.unavailable);
     } finally {
@@ -326,7 +390,30 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
 
       <section className="hold-dues" aria-label={t.dues}>
         <strong>{t.dues}</strong>
-        <p>{t.duesNote}</p>
+        {arrears && !arrearsUnavailable ? (
+          <>
+            {arrears.lines.filter(line => Number(line.outstandingLkr) > 0).length === 0
+              ? <p>{t.noDue}</p>
+              : <div className="hold-arrears-lines">
+                {arrears.lines.filter(line => Number(line.outstandingLkr) > 0).map(line => (
+                  <div className="hold-arrears-line" key={line.billingMonth}>
+                    <div>
+                      <strong>{t.month}: {formatDate(line.billingMonth, language)}</strong>
+                      <small>{t.verifiedPaid}: {formatMoney(line.verifiedPaidLkr)}</small>
+                    </div>
+                    <strong>{t.remaining}: {formatMoney(line.outstandingLkr)}</strong>
+                  </div>
+                ))}
+              </div>}
+            <div className="hold-arrears-total">
+              <strong>{t.totalDue}</strong>
+              <strong>{formatMoney(arrears.totalOutstandingLkr)}</strong>
+            </div>
+            <p>{t.penalty}: {formatMoney(arrears.penaltyLkr)}</p>
+            <p className="hold-note">{t.asOf}: {formatDate(arrears.asOf, language)}</p>
+          </>
+        ) : <p className="hold-billing-pending" role="status">{t.duesUnavailable}</p>}
+        <p className="hold-note">{t.duesNote}</p>
       </section>
 
       <section className="hold-profile" aria-label={t.profile}>
