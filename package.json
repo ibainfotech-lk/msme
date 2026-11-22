@@ -25,6 +25,7 @@
     "test:mysql-historical-entry-edits": "node --import tsx --test server/tests/historical-cash-entry-edit.mysql.integration.test.ts",
     "test:mysql-hold-review-journal": "node --import tsx --test server/tests/hold-review-journal.mysql.integration.test.ts",
     "test:mysql-core-cashbook": "node --import tsx --test server/tests/core-cashbook.mysql.integration.test.ts",
+    "test:mysql-invoice-issuance": "node --import tsx --test server/tests/invoice-issuance.mysql.integration.test.ts",
     "test:mysql-trial-reservation": "node --import tsx --test server/tests/trial-grant-reservation.mysql.integration.test.ts",
     "test:mysql-promotion-reservation": "node --import tsx --test server/tests/promotion-reservation.mysql.integration.test.ts"
   },
