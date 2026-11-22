@@ -61,6 +61,12 @@ before(async () => {
   assert.equal(database[0]?.database_name, "noteto_dev");
   const migrations = await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
   assert.equal(Number(migrations[0]?.n), 17);
+  // Make this suite independent of whether another integration test seeded
+  // the business.manage permission earlier in the CI job.
+  await db.execute(
+    "INSERT INTO permissions (id, `key`, description) VALUES (?, 'business.manage', 'CI profile') ON DUPLICATE KEY UPDATE `key` = `key`",
+    [uid()]
+  );
 });
 
 interface Fixture { businessId: string; userId: string; entryId: string; roleId: string }
