@@ -9,6 +9,10 @@ import {
   type RecordReviewCandidateInput,
 } from "../src/modules/subscriptions/hold-review-journal.service";
 import type { HoldLifecycleEvidence } from "../src/modules/subscriptions/subscription-hold-lifecycle.policy";
+import {
+  inspectStoredHoldNotice, HoldNoticeEvidenceError,
+  type HoldNoticeQuery,
+} from "../src/modules/subscriptions/hold-notice-evidence.service";
 import type { MonthlyArrearsQuote } from "../src/modules/subscriptions/subscription-arrears.policy";
 
 /* Destructive fixtures only on ephemeral GitHub Actions MySQL 8.4. */
@@ -26,6 +30,7 @@ const guarded =
   process.env.DB_PASSWORD === "ci_dummy_unused_password";
 if (!guarded) throw Error("STOP: Only ephemeral GitHub Actions MySQL 8.4 is permitted.");
 process.env.NOTETO_HOLD_REVIEW_JOURNAL_ENABLED = "true";
+process.env.NOTETO_HOLD_NOTICE_EVIDENCE_ENABLED = "true";
 
 const db = mysql.createPool({
   host: "127.0.0.1", port: 3307, database: "noteto_dev",
@@ -46,7 +51,7 @@ before(async()=>{
   assert.equal((await rows("SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1"))[0]?.token,
     "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
-  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n),18);
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n),19);
   await db.execute(
     "INSERT INTO permissions (id, `key`, description) VALUES (?, 'billing.manage', 'CI') ON DUPLICATE KEY UPDATE `key` = `key`",
     [uid()]
@@ -201,5 +206,130 @@ test("production and feature-disabled modes stop before opening a database",asyn
   }finally{
     process.env.NODE_ENV="development";
     process.env.NOTETO_HOLD_REVIEW_JOURNAL_ENABLED="true";
+  }
+});
+
+const noticeAsOf = new Date("2026-11-22T00:00:00.000Z");
+const statementHash = "a".repeat(64);
+const termsVersion = "noteto-terms-1";
+function noticeInput(f:Fixture):HoldNoticeQuery{
+  return {
+    businessId:f.businessId, subscriptionId:f.subscriptionId,
+    reviewerUserId:f.userId, asOf:noticeAsOf,
+    billingStatementSha256:statementHash, termsVersion,
+  };
+}
+async function storeReceipt(
+  f: Fixture,
+  provenance:"UNVERIFIED"|"VERIFIED"="VERIFIED",
+  graceEndsAt="2026-11-21 00:00:00.000"
+) {
+  const id=uid(), providerRef="ci-provider-"+uid();
+  await db.execute([
+    "INSERT INTO subscription_hold_notice_receipts",
+    "(id,business_id,subscription_id,provider,delivery_channel,",
+    "provider_delivery_reference,provider_event_sha256,notice_template_version,",
+    "terms_version,billing_statement_sha256,delivered_at,verified_at,",
+    "grace_ends_at,provenance_status)",
+    "VALUES (?,?,?,'CI_SMS','SMS',? ,?, 'v1', ?,?,",
+    "'2026-11-19 00:00:00.000', ?, ?, ?)",
+  ].join(" "),[
+    id,f.businessId,f.subscriptionId,providerRef,"d".repeat(64),
+    termsVersion,statementHash,
+    provenance==="VERIFIED"?"2026-11-20 00:00:00.000":null,
+    graceEndsAt,provenance,
+  ]);
+  return {id,providerRef};
+}
+
+test("no provider delivery receipt means no hold authority",async()=>{
+  const f=await fixture();
+  const inspected=await inspectStoredHoldNotice(noticeInput(f));
+  assert.equal(inspected.code,"NO_MATCHING_NOTICE");
+  assert.equal(inspected.transitionAuthorized,false);
+  assert.equal(inspected.subscriptionChanged,false);
+});
+
+test("recorded unverified provider receipt is rejected",async()=>{
+  const f=await fixture();
+  await storeReceipt(f,"UNVERIFIED");
+  const result=await inspectStoredHoldNotice(noticeInput(f));
+  assert.equal(result.code,"UNVERIFIED_PROVIDER_RECEIPT");
+  assert.equal(result.transitionAuthorized,false);
+});
+
+test("matching stored proof and elapsed grace still cannot change a subscription",async()=>{
+  const f=await fixture();
+  const receipt=await storeReceipt(f);
+  const result=await inspectStoredHoldNotice(noticeInput(f));
+  assert.equal(result.code,"GRACE_DEADLINE_RECORDED");
+  assert.equal(result.receiptId,receipt.id);
+  assert.equal(result.transitionAuthorized,false);
+  assert.equal(result.subscriptionChanged,false);
+  assert.equal(result.paymentInitiated,false);
+  assert.equal((await rows("SELECT status FROM business_subscriptions WHERE id=?",[f.subscriptionId]))[0]?.status,"ACTIVE");
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM platform_payment_transactions WHERE business_id=?",[f.businessId]))[0]?.n),0);
+});
+
+test("open grace window blocks notice review",async()=>{
+  const f=await fixture();await storeReceipt(f,"VERIFIED","2026-11-25 00:00:00.000");
+  assert.equal((await inspectStoredHoldNotice(noticeInput(f))).code,"GRACE_PERIOD_IN_PROGRESS");
+});
+
+test("tenant, monthly statement checksum and terms version are all binding",async()=>{
+  const f=await fixture(),other=await fixture();
+  await storeReceipt(f);
+  assert.equal((await inspectStoredHoldNotice({
+    ...noticeInput(f),billingStatementSha256:"b".repeat(64),
+  })).code,"NO_MATCHING_NOTICE");
+  assert.equal((await inspectStoredHoldNotice({
+    ...noticeInput(f),termsVersion:"noteto-terms-2",
+  })).code,"NO_MATCHING_NOTICE");
+  await assert.rejects(()=>inspectStoredHoldNotice({
+    ...noticeInput(f),reviewerUserId:other.userId,
+  }),(e:unknown)=>{
+    assert.ok(e instanceof HoldNoticeEvidenceError);
+    assert.equal(e.code,"REVIEWER_PERMISSION_REQUIRED");return true;
+  });
+});
+
+test("receipt provider reference cannot be reused",async()=>{
+  const f=await fixture(),stored=await storeReceipt(f);
+  await assert.rejects(()=>db.execute([
+    "INSERT INTO subscription_hold_notice_receipts",
+    "(id,business_id,subscription_id,provider,delivery_channel,",
+    "provider_delivery_reference,provider_event_sha256,notice_template_version,",
+    "terms_version,billing_statement_sha256,delivered_at,verified_at,grace_ends_at,provenance_status)",
+    "VALUES (?,?,?,'CI_SMS','SMS',?,?,'v1',?,?,'2026-11-19 00:00:00.000',",
+    "'2026-11-20 00:00:00.000','2026-11-21 00:00:00.000','VERIFIED')",
+  ].join(" "),[
+    uid(),f.businessId,f.subscriptionId,stored.providerRef,"e".repeat(64),
+    termsVersion,statementHash,
+  ]));
+});
+
+test("notice records cannot be used for already-held subscriptions",async()=>{
+  const f=await fixture("PAST_DUE");
+  await assert.rejects(()=>inspectStoredHoldNotice(noticeInput(f)),(e:unknown)=>{
+    assert.ok(e instanceof HoldNoticeEvidenceError);
+    assert.equal(e.code,"CURRENT_ACTIVE_SUBSCRIPTION_REQUIRED");return true;
+  });
+});
+
+test("production or disabled notice inspection never opens MySQL",async()=>{
+  const f=await fixture(),query=noticeInput(f);
+  try{
+    process.env.NOTETO_HOLD_NOTICE_EVIDENCE_ENABLED="false";
+    await assert.rejects(()=>inspectStoredHoldNotice(query,async()=>{throw Error("DB_CALLED");}),
+      (e:unknown)=>{assert.ok(e instanceof HoldNoticeEvidenceError);
+        assert.equal(e.code,"HOLD_NOTICE_INSPECTION_DISABLED");return true;});
+    process.env.NOTETO_HOLD_NOTICE_EVIDENCE_ENABLED="true";
+    process.env.NODE_ENV="production";
+    await assert.rejects(()=>inspectStoredHoldNotice(query,async()=>{throw Error("DB_CALLED");}),
+      (e:unknown)=>{assert.ok(e instanceof HoldNoticeEvidenceError);
+        assert.equal(e.code,"HOLD_NOTICE_INSPECTION_DISABLED");return true;});
+  }finally{
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_HOLD_NOTICE_EVIDENCE_ENABLED="true";
   }
 });
