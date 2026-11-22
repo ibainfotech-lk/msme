@@ -45,8 +45,8 @@ export interface SubscriptionAccessState {
  * generated before the hold; live recomputation is forbidden.
  */
 export type VerifiedResource =
-  | { kind: "EXISTING_ENTRY"; sameBusiness: true; createdBeforeHold: true }
-  | { kind: "SAVED_REPORT"; sameBusiness: true; generatedBeforeHold: true; immutableSnapshot: true };
+  | { kind: "EXISTING_ENTRY"; sameBusiness: boolean; createdBeforeHold: boolean }
+  | { kind: "SAVED_REPORT"; sameBusiness: boolean; generatedBeforeHold: boolean; immutableSnapshot: boolean };
 
 export interface FeatureAccessDecision {
   mode: AccessMode;
