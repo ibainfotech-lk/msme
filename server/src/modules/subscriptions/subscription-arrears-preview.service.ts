@@ -24,13 +24,17 @@ export class ArrearsPreviewError extends Error {
 
 export interface ArrearsPreviewInput {
   businessId: string;
-  subscriptionId: string;
+  subscriptionId?: string;
   userId: string;
   asOf: Date;
+  /** Enforce current, reviewed PAST_DUE status for a customer hold statement. */
+  requireCurrentHold?: boolean;
 }
 
 interface SubscriptionRow extends RowDataPacket {
+  id: string;
   starts_at: Date | null;
+  held_at: Date | null;
   status: string;
 }
 interface MonthlyDueRow extends RowDataPacket {
@@ -66,8 +70,14 @@ export async function previewMonthlySubscriptionArrears(
   if (process.env.NOTETO_ARREARS_HISTORY_READY !== "true") {
     throw new ArrearsPreviewError("ARREARS_HISTORY_NOT_READY", 503);
   }
+  if (input.requireCurrentHold &&
+      (process.env.NOTETO_HOLD_BILLING_STATEMENT_ENABLED !== "true" ||
+       process.env.NOTETO_VERIFIED_PAYMENT_HISTORY_READY !== "true")) {
+    throw new ArrearsPreviewError("HOLD_BILLING_STATEMENT_NOT_READY", 503);
+  }
   if (!strictUuid.test(input.businessId) ||
-      !strictUuid.test(input.subscriptionId) ||
+      (input.subscriptionId !== undefined && !strictUuid.test(input.subscriptionId)) ||
+      (!input.requireCurrentHold && input.subscriptionId === undefined) ||
       !strictUuid.test(input.userId) ||
       !(input.asOf instanceof Date) || !Number.isFinite(input.asOf.getTime())) {
     throw new ArrearsPreviewError("INVALID_ARREARS_REFERENCE", 400);
@@ -86,9 +96,18 @@ export async function previewMonthlySubscriptionArrears(
       throw new ArrearsPreviewError("BILLING_PERMISSION_DENIED", 403);
     }
 
+    // Hold statements resolve the CURRENT subscription under the same
+    // business lock; the browser cannot supply or switch its subscription ID.
     const [subscriptions] = await connection.execute<SubscriptionRow[]>(
-      "SELECT status, starts_at FROM business_subscriptions WHERE id = ? AND business_id = ? FOR UPDATE",
-      [input.subscriptionId, input.businessId]
+      input.requireCurrentHold
+        ? [
+          "SELECT bs.id, bs.status, bs.starts_at, bs.held_at",
+          "FROM businesses b JOIN business_subscriptions bs",
+          "ON bs.id = b.current_subscription_id AND bs.business_id = b.id",
+          "WHERE b.id = ? FOR UPDATE",
+        ].join(" ")
+        : "SELECT id, status, starts_at, held_at FROM business_subscriptions WHERE id = ? AND business_id = ? FOR UPDATE",
+      input.requireCurrentHold ? [input.businessId] : [input.subscriptionId, input.businessId]
     );
     const subscription = subscriptions[0];
     if (!subscription ||
@@ -96,6 +115,14 @@ export async function previewMonthlySubscriptionArrears(
         !(subscription.starts_at instanceof Date) ||
         !Number.isFinite(subscription.starts_at.getTime())) {
       throw new ArrearsPreviewError("SUBSCRIPTION_REQUIRES_REVIEW");
+    }
+    if (input.requireCurrentHold &&
+        (business.status !== "ACTIVE" ||
+         subscription.status !== "PAST_DUE" ||
+         !(subscription.held_at instanceof Date) ||
+         !Number.isFinite(subscription.held_at.getTime()) ||
+         subscription.held_at.getTime() > input.asOf.getTime())) {
+      throw new ArrearsPreviewError("REVIEWED_HOLD_REQUIRED", 403);
     }
 
     const [dueRows] = await connection.execute<MonthlyDueRow[]>(
@@ -106,7 +133,7 @@ export async function previewMonthlySubscriptionArrears(
         "WHERE business_id = ? AND subscription_id = ?",
         "ORDER BY billing_month",
       ].join(" "),
-      [input.businessId, input.subscriptionId]
+      [input.businessId, subscription.id]
     );
     const [allocationRows] = await connection.execute<AllocationRow[]>(
       [
@@ -123,7 +150,7 @@ export async function previewMonthlySubscriptionArrears(
         "ON p.id = a.payment_id AND p.business_id = a.business_id",
         "WHERE d.business_id = ? AND d.subscription_id = ?",
       ].join(" "),
-      [input.businessId, input.subscriptionId]
+      [input.businessId, subscription.id]
     );
 
     const allocations = new Map<string, VerifiedDueAllocation[]>();
@@ -159,4 +186,19 @@ export async function previewMonthlySubscriptionArrears(
   } finally {
     connection.release();
   }
+}
+
+/**
+ * Authoritative, read-only customer statement for an already reviewed hold.
+ * Current subscription and ownership are derived from the database.
+ * Never initiates payment, posts dues, or changes access status.
+ */
+export function previewCurrentHeldSubscriptionArrears(
+  input: Pick<ArrearsPreviewInput, "businessId" | "userId" | "asOf">,
+  getConnection: ConnectionFactory = () => pool.getConnection()
+): Promise<MonthlyArrearsQuote> {
+  return previewMonthlySubscriptionArrears({
+    ...input,
+    requireCurrentHold: true,
+  }, getConnection);
 }
