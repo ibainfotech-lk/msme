@@ -177,6 +177,9 @@ jobs:
       - name: Verify immutable report archive retrieval, hold dates and checksum in disposable MySQL
         run: npm run test:mysql-archived-reports
 
+      - name: Verify historical cash edit audit and hold isolation in disposable MySQL
+        run: npm run test:mysql-historical-entry-edits
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
