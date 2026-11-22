@@ -273,7 +273,7 @@ export default function HeldAccountScreen({ businessId, businessName, language, 
         if (verified.currency !== "LKR" ||
             verified.paymentActionAllowed !== false ||
             typeof verified.totalOutstandingLkr !== "string" ||
-            !/^(?:0|[1-9][0-9]*)\\.[0-9]{2}$/.test(verified.totalOutstandingLkr) ||
+            !/^(?:0|[1-9][0-9]*)\.[0-9]{2}$/.test(verified.totalOutstandingLkr) ||
             !Array.isArray(verified.lines)) {
           throw new Error("UNVERIFIED_BILLING_STATEMENT");
         }
