@@ -63,6 +63,9 @@ jobs:
       - name: Verify read-only monthly arrears policy
         run: npm run test:subscription-arrears-policy
 
+      - name: Verify subscription hold-mode feature restrictions
+        run: npm run test:subscription-hold-policy
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
@@ -167,6 +170,9 @@ jobs:
 
       - name: Verify allocation of already verified monthly payments in disposable MySQL
         run: npm run test:mysql-verified-due-allocation
+
+      - name: Verify held subscription permissions and tenant boundaries in disposable MySQL
+        run: npm run test:mysql-subscription-hold
 
   client-build:
     name: React client TypeScript build
