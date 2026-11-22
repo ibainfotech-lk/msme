@@ -10,6 +10,7 @@ import mysql, { type RowDataPacket } from "mysql2/promise";
 
 import authRouter from "../src/routes/auth.routes";
 import runtimePool from "../src/config/database";
+import { REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION } from "../src/modules/checkout/registration-legal.policy";
 import {
   createRegistrationCheckout,
   RegistrationCheckoutError,
@@ -116,6 +117,10 @@ function data(planCode: string): RegistrationCheckoutInput {
     preferredLanguage: "ta",
     planCode,
     idempotencyKey: "register_" + randomUUID(),
+    termsAccepted: true,
+    privacyAcknowledged: true,
+    termsVersion: REGISTRATION_TERMS_VERSION,
+    privacyVersion: REGISTRATION_PRIVACY_VERSION,
   };
 }
 
@@ -161,6 +166,15 @@ test("OTP-backed registration creates pending account and checkout atomically", 
   assert.equal(Number(granted[0]?.n), 12);
   assert.equal(checkout[0].status, "PENDING");
   assert.equal(checkout[0].amount_lkr, "499.00");
+  const consent = await query(
+    "SELECT terms_version, privacy_notice_version, acceptance_language, accepted_at FROM registration_legal_acceptances WHERE checkout_order_id = ? AND user_id = ? AND business_id = ?",
+    [created.checkoutOrderId, created.userId, created.businessId]
+  );
+  assert.equal(consent.length, 1);
+  assert.equal(consent[0].terms_version, REGISTRATION_TERMS_VERSION);
+  assert.equal(consent[0].privacy_notice_version, REGISTRATION_PRIVACY_VERSION);
+  assert.equal(consent[0].acceptance_language, "ta");
+  assert.ok(consent[0].accepted_at);
 });
 
 test("registration service rejects missing and malformed email before connecting", async () => {
@@ -172,6 +186,23 @@ test("registration service rejects missing and malformed email before connecting
         throw new Error("UNEXPECTED_DB_CONNECTION");
       }),
       hasCode("INVALID_REGISTRATION_EMAIL")
+    );
+  }
+});
+
+test("registration rejects absent legal agreement or stale document versions before DB", async () => {
+  const p = await plan();
+  const fixture = data(p.code);
+  const invalid = [
+    { ...fixture, termsAccepted: false },
+    { ...fixture, privacyAcknowledged: false },
+    { ...fixture, termsVersion: "previous" },
+    { ...fixture, privacyVersion: "previous" },
+  ];
+  for (const entry of invalid) {
+    await assert.rejects(
+      () => createRegistrationCheckout(entry, async () => { throw new Error("UNEXPECTED_DB_CONNECTION"); }),
+      hasCode("LEGAL_ACCEPTANCE_REQUIRED")
     );
   }
 });
@@ -302,6 +333,10 @@ test("HTTP endpoint requires matching Origin and recent verified-OTP session", a
       business_type: "sole_proprietor",
       preferred_language: "en",
       plan_code: p.code,
+      terms_accepted: true,
+      privacy_acknowledged: true,
+      terms_version: REGISTRATION_TERMS_VERSION,
+      privacy_version: REGISTRATION_PRIVACY_VERSION,
     };
 
     const unauthenticated = await send("/api/auth/register-checkout", body);
@@ -337,6 +372,22 @@ test("HTTP endpoint requires matching Origin and recent verified-OTP session", a
     );
     assert.equal(invalidEmail.status, 400);
     assert.equal(invalidEmail.body.code, "INVALID_REGISTRATION_CHECKOUT_REQUEST");
+
+    const missingTerms = await send(
+      "/api/auth/register-checkout", { ...body, terms_accepted: undefined }, minted.cookie!
+    );
+    assert.equal(missingTerms.status, 400);
+    assert.equal(missingTerms.body.code, "INVALID_REGISTRATION_CHECKOUT_REQUEST");
+
+    const uncheckedPrivacy = await send(
+      "/api/auth/register-checkout", { ...body, privacy_acknowledged: false }, minted.cookie!
+    );
+    assert.equal(uncheckedPrivacy.status, 400);
+
+    const oldVersion = await send(
+      "/api/auth/register-checkout", { ...body, terms_version: "old" }, minted.cookie!
+    );
+    assert.equal(oldVersion.status, 400);
 
     const created = await send("/api/auth/register-checkout", body, minted.cookie!);
     assert.equal(created.status, 201);
