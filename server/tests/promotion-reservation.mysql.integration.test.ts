@@ -96,7 +96,7 @@ async function fixture(options: {
   const planId = uid();
   const identity = options.identity ?? fingerprint();
   const promotionId = options.promotionId ?? uid();
-  const promotionCode = options.promotionCode ?? ("CI_PROMO_" + uid().replace(/-/g, ""));
+  const promotionCode = options.promotionCode ?? ("CI_PROMO_" + uid().replace(/-/g, "").toUpperCase());
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
