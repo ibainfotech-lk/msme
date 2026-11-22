@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getHeldProfile, updateHeldProfile, HeldProfileError } from "./held-profile.service";
 import {
   previewCurrentHeldSubscriptionArrears, ArrearsPreviewError,
 } from "./subscription-arrears-preview.service";
@@ -43,7 +44,8 @@ function respondWithError(error: unknown, res: import("express").Response, next:
       error instanceof HistoricalEntryEditError ||
       error instanceof ArchivedReportError ||
       error instanceof SubscriptionHoldAccessError ||
-      error instanceof ArrearsPreviewError) {
+      error instanceof ArrearsPreviewError ||
+      error instanceof HeldProfileError) {
     res.status(error.statusCode).json({
       success: false, code: error.code,
     });
@@ -97,6 +99,52 @@ router.get("/businesses/:businessId/arrears", async (req, res, next) => {
     res.json({ success: true, ...quote });
   } catch (error) { respondWithError(error, res, next); }
 });
+
+// Personal name/language and business contact details only. Immutable legal,
+// registration, OTP, billing and tax identity fields are never accepted.
+const heldProfileUpdate = z.strictObject({
+  expectedVersion: z.number().int().min(0),
+  fullName: z.string().min(2).max(150),
+  preferredLanguage: z.enum(["en", "ta", "si"]),
+  displayName: z.string().min(2).max(150),
+  contactEmail: z.string().max(191),
+  address: z.string().max(350),
+});
+
+router.get("/businesses/:businessId/profile", async (req, res, next) => {
+  const route = ids.safeParse(req.params);
+  if (!route.success) {
+    res.status(400).json({ success: false, code: "INVALID_PROFILE_REFERENCE" });
+    return;
+  }
+  try {
+    const data = await getHeldProfile({
+      businessId: route.data.businessId, userId: req.session.userId!,
+    });
+    res.set("Cache-Control", "private, no-store");
+    res.json({ success: true, ...data });
+  } catch (error) { respondWithError(error, res, next); }
+});
+
+router.patch("/businesses/:businessId/profile", requireCheckoutOrigin,
+  async (req, res, next) => {
+    const route = ids.safeParse(req.params);
+    const body = heldProfileUpdate.safeParse(req.body);
+    if (!route.success || !body.success) {
+      res.status(400).json({ success: false, code: "INVALID_PROFILE_DETAILS" });
+      return;
+    }
+    try {
+      const result = await updateHeldProfile({
+        businessId: route.data.businessId,
+        userId: req.session.userId!,
+        ...body.data,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.json({ success: true, ...result });
+    } catch (error) { respondWithError(error, res, next); }
+  }
+);
 
 router.get("/businesses/:businessId/entries", async (req, res, next) => {
   const route = ids.safeParse(req.params);
