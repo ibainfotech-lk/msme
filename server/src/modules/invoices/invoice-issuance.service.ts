@@ -333,6 +333,20 @@ export async function issueInvoice(
   });
 }
 
+/** Read the authoritative current Sri Lanka calendar-month invoice quota. */
+export async function getInvoiceQuota(
+  input:{businessId:string;userId:string},
+  getConnection:ConnectionFactory=()=>pool.getConnection()
+):Promise<{billingMonth:string;quota:InvoiceQuota}> {
+  enabled();refs(input.businessId,input.userId);
+  return tx(getConnection,async(con,now)=>{
+    const {limit}=await authorize(con,input.businessId,input.userId,"invoices.read",now);
+    const billingMonth=colomboToday(now).slice(0,7)+"-01";
+    const used=await monthlyUsed(con,input.businessId,billingMonth);
+    return {billingMonth,quota:quota(limit,used)};
+  });
+}
+
 export async function listInvoices(
   input:{businessId:string;userId:string;limit?:number;cursor?:{createdAt:string;id:string}},
   getConnection:ConnectionFactory=()=>pool.getConnection()
