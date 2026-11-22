@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
+import HeldAccountScreen from "./components/HeldAccountScreen";
 import { getTranslations, type Language } from "./locales";
 import {
   REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION,
@@ -17,7 +18,8 @@ type Screen =
   | "login"
   | "otp"
   | "register"
-  | "dashboard";
+  | "dashboard"
+  | "hold";
 interface PaidPlan {
   id: string;
   code: string;
@@ -63,6 +65,11 @@ interface Summary {
   expenses: number;
   balance: number;
 }
+
+// The held-account interface is opt-in for private development testing only.
+// Server authorization remains authoritative; this flag grants no backend access.
+const heldUiEnabled = import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_HOLD_MODE_UI_ENABLED === "true";
 
 const languages = [
   { id: "en" as const, name: "English", subtitle: "Continue in English" },
@@ -265,11 +272,35 @@ export default function App() {
         const selected = active ?? list.find(b => b.status === "PENDING") ?? null;
         setSelectedBusiness(selected);
         setPendingCheckout(null);
-        setScreen(active ? "dashboard" : "checkout");
-        if (!active) {
-          setMessage(selected
-            ? "Your business is pending payment confirmation. Bank checkout is not yet available in private testing."
-            : "No active business is linked to this account.");
+
+        if (active && heldUiEnabled) {
+          // Never infer HOLD/FULL from cached business fields or the browser.
+          // Fail closed if the server cannot confirm the current access mode.
+          try {
+            const access = await apiGet(
+              "/api/hold-history/businesses/" + encodeURIComponent(active.id) + "/access"
+            );
+            if (access.mode === "HOLD") {
+              setScreen("hold");
+              setMessage("");
+            } else if (access.mode === "FULL") {
+              setScreen("dashboard");
+              setMessage("");
+            } else {
+              setScreen("checkout");
+              setMessage("Subscription access requires review. No transactions are available.");
+            }
+          } catch {
+            setScreen("checkout");
+            setMessage("Could not verify subscription access. Please sign in again later.");
+          }
+        } else {
+          setScreen(active ? "dashboard" : "checkout");
+          if (!active) {
+            setMessage(selected
+              ? "Your business is pending payment confirmation. Bank checkout is not yet available in private testing."
+              : "No active business is linked to this account.");
+          }
         }
       }
 
@@ -923,6 +954,16 @@ export default function App() {
               {t.logout}
             </button>
           </>
+        )}
+
+        {screen === "hold" && heldUiEnabled && selectedBusiness && (
+          <HeldAccountScreen
+            key={selectedBusiness.id}
+            businessId={selectedBusiness.id}
+            businessName={selectedBusiness.name}
+            language={language ?? "en"}
+            onLogout={() => void logout()}
+          />
         )}
 
         {screen === "dashboard" && (
