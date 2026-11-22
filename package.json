@@ -14,6 +14,7 @@
     "test:mock-payment-settlement": "node --import tsx --test server/tests/payment-settlement.service.test.ts",
     "test:mysql-payment-settlement": "node --import tsx --test server/tests/payment-settlement.mysql.integration.test.ts",
     "test:mysql-registration-checkout": "node --import tsx --test server/tests/registration-checkout.mysql.integration.test.ts",
+    "test:registration-legal": "node --import tsx --test server/tests/registration-legal.policy.test.ts",
     "test:mysql-trial-reservation": "node --import tsx --test server/tests/trial-grant-reservation.mysql.integration.test.ts",
     "test:mysql-promotion-reservation": "node --import tsx --test server/tests/promotion-reservation.mysql.integration.test.ts"
   },
