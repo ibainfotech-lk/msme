@@ -15,6 +15,9 @@ import {
 } from "../src/modules/transactions/historical-cash-entry-edit.service";
 import { listPreviousEntries, listPreviouslyGeneratedReports, HeldHistoryError } from "../src/modules/subscriptions/held-history-list.service";
 import heldHistoryRouter from "../src/modules/subscriptions/held-history.routes";
+import {
+  getHeldProfile, updateHeldProfile, HeldProfileError,
+} from "../src/modules/subscriptions/held-profile.service";
 
 /* DESTRUCTIVE FIXTURES: DISPOSABLE GitHub Actions MySQL 8.4 only. */
 const guard =
@@ -33,6 +36,7 @@ if (!guard) throw Error("STOP: Historical edit fixtures require disposable MySQL
 process.env.NOTETO_HISTORICAL_EDIT_ENABLED = "true";
 process.env.NOTETO_HOLD_HISTORY_API_ENABLED = "true";
 process.env.NOTETO_SUBSCRIPTION_HOLD_POLICY_ENABLED = "true";
+process.env.NOTETO_HELD_PROFILE_EDIT_ENABLED = "true";
 const db = mysql.createPool({
   host: "127.0.0.1", port: 3307, user: "noteto_services",
   password: "ci_dummy_unused_password", database: "noteto_dev",
@@ -84,7 +88,7 @@ async function fixture(options: {
       [roleId, businessId]
     );
     await con.execute(
-      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` IN ('transactions.update','transactions.read','reports.read','business.read')",
+      "INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE `key` IN ('transactions.update','transactions.read','reports.read','business.read','business.manage')",
       [roleId]
     );
     await con.execute(
@@ -440,4 +444,121 @@ test("authenticated HTTP access reports HOLD and blocks forged historical edits"
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+});
+
+test("held customer edits contact and personal profile with atomic audit; identity and finances stay unchanged", async () => {
+  const f = await fixture();
+  const before = await getHeldProfile({ businessId: f.businessId, userId: f.userId });
+  assert.equal(before.version, 0);
+  assert.equal(before.mode, "HOLD");
+  const phoneBefore = before.personalPhone;
+  const saved = await updateHeldProfile({
+    businessId: f.businessId, userId: f.userId,
+    expectedVersion: 0, fullName: "Testing Owner",
+    preferredLanguage: "ta", displayName: "Shop Display",
+    contactEmail: "contact@example.com", address: "Jaffna, Sri Lanka",
+  });
+  assert.equal(saved.version, 1);
+  assert.equal(saved.financeModified, false);
+  const afterProfile = await getHeldProfile({ businessId: f.businessId, userId: f.userId });
+  assert.equal(afterProfile.profile.fullName, "Testing Owner");
+  assert.equal(afterProfile.profile.preferredLanguage, "ta");
+  assert.equal(afterProfile.profile.displayName, "Shop Display");
+  assert.equal(afterProfile.version, 1);
+  assert.equal(afterProfile.personalPhone, phoneBefore);
+  assert.equal(afterProfile.businessLegalName, before.businessLegalName);
+  const audits = await rows(
+    "SELECT COUNT(*) AS n FROM business_profile_edit_audits WHERE business_id = ?", [f.businessId]
+  );
+  assert.equal(Number(audits[0]?.n), 1);
+  const original = await rows("SELECT amount_lkr FROM cash_transactions WHERE id = ?", [f.entryId]);
+  assert.equal(String(original[0]?.amount_lkr), "499.00");
+  const sub = await rows("SELECT status AS token FROM business_subscriptions WHERE id = (SELECT current_subscription_id FROM businesses WHERE id = ?)", [f.businessId]);
+  assert.equal(String(sub[0]?.token), "PAST_DUE");
+});
+
+test("stale profile version cannot override a successful correction", async () => {
+  const f = await fixture();
+  const input = {
+    businessId: f.businessId, userId: f.userId,
+    expectedVersion: 0, fullName: "Account Manager",
+    preferredLanguage: "en" as const, displayName: "Shop One",
+    contactEmail: "", address: "Jaffna",
+  };
+  await updateHeldProfile(input);
+  await assert.rejects(() => updateHeldProfile({ ...input, displayName: "Shop Two" }),
+    (error: unknown) => {
+      assert.ok(error instanceof HeldProfileError);
+      assert.equal(error.code, "PROFILE_VERSION_CONFLICT");
+      return true;
+    });
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM business_profile_edit_audits WHERE business_id = ?", [f.businessId]
+  ))[0]?.n), 1);
+});
+
+test("member of another business cannot modify this business profile", async () => {
+  const a = await fixture(), b = await fixture();
+  await assert.rejects(() => updateHeldProfile({
+    businessId: a.businessId, userId: b.userId, expectedVersion: 0,
+    fullName: "Unauthorized User", preferredLanguage: "en",
+    displayName: "Changed Store", contactEmail: "", address: "",
+  }), (error: unknown) => {
+    assert.ok(error instanceof HeldProfileError);
+    assert.equal(error.code, "PROFILE_PERMISSION_DENIED");
+    return true;
+  });
+});
+
+test("missing hold timestamp and invalid contact email reject profile edits", async () => {
+  const f = await fixture({ heldAt: null });
+  await assert.rejects(() => getHeldProfile({ businessId: f.businessId, userId: f.userId }),
+    (error: unknown) => {
+      assert.ok(error instanceof HeldProfileError);
+      assert.equal(error.code, "REVIEWED_HOLD_REQUIRED");
+      return true;
+    });
+  const other = await fixture();
+  await assert.rejects(() => updateHeldProfile({
+    businessId: other.businessId, userId: other.userId,
+    expectedVersion: 0, fullName: "Valid Owner", preferredLanguage: "en",
+    displayName: "Store", contactEmail: "not-an-email", address: "",
+  }, async () => { throw new Error("UNEXPECTED_DB"); }), (error: unknown) => {
+    assert.ok(error instanceof HeldProfileError);
+    assert.equal(error.code, "INVALID_PROFILE_DETAILS");
+    return true;
+  });
+});
+
+test("concurrent contact updates serialize by business and make one audit revision", async () => {
+  const f = await fixture();
+  const input = {
+    businessId: f.businessId, userId: f.userId,
+    expectedVersion: 0, fullName: "Store Owner",
+    preferredLanguage: "en" as const, contactEmail: "",
+    address: "Jaffna", displayName: "Store Alpha",
+  };
+  const result = await Promise.allSettled([
+    updateHeldProfile(input), updateHeldProfile({ ...input, displayName: "Store Beta" }),
+  ]);
+  assert.equal(result.filter(x => x.status === "fulfilled").length, 1);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM business_profile_edit_audits WHERE business_id = ?", [f.businessId]
+  ))[0]?.n), 1);
+});
+
+test("hold profile is disabled in production even before any DB access", async () => {
+  const f = await fixture();
+  try {
+    process.env.NODE_ENV = "production";
+    await assert.rejects(
+      () => getHeldProfile({ businessId: f.businessId, userId: f.userId },
+        async () => { throw new Error("UNEXPECTED_DB"); }),
+      (error: unknown) => {
+        assert.ok(error instanceof HeldProfileError);
+        assert.equal(error.code, "HELD_PROFILE_DISABLED");
+        return true;
+      }
+    );
+  } finally { process.env.NODE_ENV = "development"; }
 });
