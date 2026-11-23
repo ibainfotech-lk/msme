@@ -2,6 +2,9 @@ import {useState} from "react";
 import type {FormEvent} from "react";
 import type {Language} from "../locales";
 import "./TaxReadinessPanel.css";
+import TaxpayerIntakePanel from "./TaxpayerIntakePanel";
+const taxpayerIntakeUiEnabled=import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_F17_TAX_INTAKE_UI_ENABLED==="true";
 
 type Kind="SOLE_PROPRIETOR"|"PRIVATE_LIMITED"|"COMMUNITY_ORGANIZATION";
 interface Result{
@@ -174,6 +177,8 @@ export default function TaxReadinessPanel({businessId,language}:Props){
           </li>)}
         </ul>}
       </div>
+      {taxpayerIntakeUiEnabled &&
+        <TaxpayerIntakePanel businessId={businessId} year={year} language={language}/>}
     </>}
   </section>;
 }
