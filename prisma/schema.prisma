@@ -516,6 +516,8 @@ model User {
   businessProfileEdits BusinessProfileEditAudit[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
   reviewedTaxRuleSources TaxRuleSourceReview[]
+  editedTaxpayerIntakeDrafts TaxpayerIntakeDraft[]
+  changedTaxpayerIntakeAudits TaxpayerIntakeDraftAudit[]
 
   @@map("users")
 }
@@ -544,6 +546,7 @@ model Business {
   promotionRedemptions PromotionRedemption[]
   legalAcceptances RegistrationLegalAcceptance[]
   identityOfferClaims IdentityOfferClaim[]
+  taxpayerIntakeDrafts TaxpayerIntakeDraft[]
   verifiedIdentity VerifiedBusinessIdentity?
   introductoryTrialGrant IntroductoryTrialGrant?
   currentSubscription  BusinessSubscription?        @relation("CurrentBusinessSubscription", fields: [id, currentSubscriptionId], references: [businessId, id], onDelete: Restrict)
@@ -1039,4 +1042,65 @@ model TaxRuleSourceReview {
   @@index([taxpayerScope, assessmentYearStart, reviewStatus], map: "idx_tax_rule_source_scope_year_status")
   @@index([reviewedByUserId], map: "idx_tax_rule_source_reviewed_by")
   @@map("tax_rule_source_reviews")
+}
+
+
+/** Business-entered unverified, non-identifying preparation answers ONLY. */
+enum TaxpayerCategoryClaim {
+  UNKNOWN
+  INDIVIDUAL
+  COMPANY
+  OTHER_ENTITY
+  NOT_SURE
+}
+enum TaxpayerResidencyClaim {
+  UNKNOWN
+  RESIDENT
+  NON_RESIDENT
+  NOT_SURE
+}
+enum TaxpayerYesNoClaim {
+  UNKNOWN
+  YES
+  NO
+  NOT_SURE
+}
+model TaxpayerIntakeDraft {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  assessmentYearStart Int @map("assessment_year_start") @db.UnsignedInt
+  taxpayerCategoryClaim TaxpayerCategoryClaim @default(UNKNOWN) @map("taxpayer_category_claim")
+  residencyClaim TaxpayerResidencyClaim @default(UNKNOWN) @map("residency_claim")
+  otherIncomeClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("other_income_claim")
+  capitalAssetsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("capital_assets_claim")
+  nonDeductibleCostsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("non_deductible_costs_claim")
+  withholdingCreditsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("withholding_credits_claim")
+  ownerIsTaxpayerClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("owner_is_taxpayer_claim")
+  revision Int @default(1) @db.UnsignedInt
+  updatedByUserId String @map("updated_by_user_id") @db.Char(36)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_tax_intake_business")
+  updatedBy User @relation(fields: [updatedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_intake_editor")
+  audits TaxpayerIntakeDraftAudit[]
+  @@unique([businessId, assessmentYearStart], map: "uq_tax_intake_business_year")
+  @@unique([businessId, id], map: "uq_tax_intake_tenant_id")
+  @@index([updatedByUserId], map: "idx_tax_intake_editor")
+  @@map("taxpayer_intake_drafts")
+}
+model TaxpayerIntakeDraftAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  draftId String @map("draft_id") @db.Char(36)
+  revision Int @db.UnsignedInt
+  changedByUserId String @map("changed_by_user_id") @db.Char(36)
+  previousClaimsJson Json? @map("previous_claims_json")
+  updatedClaimsJson Json @map("updated_claims_json")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  draft TaxpayerIntakeDraft @relation(fields: [businessId, draftId], references: [businessId, id], onDelete: Restrict, map: "fk_tax_intake_audit_draft_tenant")
+  changedBy User @relation(fields: [changedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_intake_audit_actor")
+  @@unique([draftId, revision], map: "uq_tax_intake_audit_revision")
+  @@index([businessId, draftId, revision], map: "idx_tax_intake_audit_tenant")
+  @@index([changedByUserId], map: "idx_tax_intake_audit_actor")
+  @@map("taxpayer_intake_draft_audits")
 }
