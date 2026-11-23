@@ -69,6 +69,9 @@ jobs:
       - name: Verify held subscription lifecycle review and safe restoration policy
         run: npm run test:subscription-hold-lifecycle
 
+      - name: Verify F17.4d tax review checklist never treats declarations as verified
+        run: node --import tsx --test server/tests/taxpayer-review-checklist.policy.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
@@ -195,7 +198,7 @@ jobs:
       - name: Verify F17.3 cash-basis day week year reports, permissions and no unpaid invoice income
         run: npm run test:mysql-cashbook-reports
 
-      - name: Verify F17.4 tax readiness, reviewed sources and unverified taxpayer intake with audit
+      - name: Verify F17.4 tax readiness, taxpayer draft audits and review checklist (no tax calculation)
         run: npm run test:mysql-tax-readiness
 
   client-build:
