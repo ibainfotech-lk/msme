@@ -23,3 +23,7 @@
 .report-table-scroll td{padding:10px 12px;border-top:1px solid #e2eee7}
 .noteto-cash-reports>.secondary-button{justify-self:start;width:auto;margin:0}
 @media(max-width:700px){.report-metrics{grid-template-columns:1fr}.report-periods button{flex:1}.reports-controls{display:grid;grid-template-columns:1fr}.report-table-scroll table{min-width:450px}}
+
+.report-download-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.report-download-actions button{width:auto;margin:0}
+.report-download-actions button:disabled{opacity:.55}
