@@ -42,6 +42,7 @@ interface SourceRow extends RowDataPacket {
   assessment_year_start:number;effective_from:string;effective_to:string;
   source_title:string;source_uri:string;source_sha256:string;
   reviewed_at:Date;
+  reviewed_by_user_id:string|null;
 }
 const HEX64=/^[a-f0-9]{64}$/i;
 const SCOPES=["INDIVIDUAL","COMPANY","OTHER_ENTITY"] as const;
@@ -70,7 +71,8 @@ export async function getTaxSourceCoverage(
           "SELECT source_code,revision,taxpayer_scope,assessment_year_start,",
           "DATE_FORMAT(effective_from,'%Y-%m-%d') AS effective_from,",
           "DATE_FORMAT(effective_to,'%Y-%m-%d') AS effective_to,",
-          "source_title,source_uri,source_sha256,reviewed_at",
+          "source_title,source_uri,source_sha256,reviewed_at,",
+          "reviewed_by_user_id",
           "FROM tax_rule_source_reviews",
           "WHERE assessment_year_start=? AND review_status='REVIEWED'",
           "AND effective_from<=? AND effective_to>=?",
@@ -86,7 +88,9 @@ export async function getTaxSourceCoverage(
           !officialUrl(row.source_uri)||
           typeof row.source_title!=="string"||
           row.source_title.length<5 || row.source_title.length>250||
-          !(row.reviewed_at instanceof Date)){
+          !(row.reviewed_at instanceof Date) ||
+          typeof row.reviewed_by_user_id!=="string" ||
+          row.reviewed_by_user_id.trim().length===0){
           throw new TaxReadinessError("TAX_SOURCE_REVIEW_EVIDENCE_INVALID",409);
         }
         return {
