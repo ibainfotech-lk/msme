@@ -316,6 +316,40 @@ test("only reviewed and effective legal sources surface with provenance",async()
   assert.equal(result.taxPayableLkr,null);
   assert.equal(result.reviewRequired,true);
 });
+test("MySQL 8.4 review timestamp CHECK still rejects approval without timestamp",async()=>{
+  const f=await fixture(),sourceCode="NO_TIMESTAMP_"+uid().replace(/-/g,"");
+  await reviewSource(f,"DRAFT",{code:sourceCode});
+  await assert.rejects(()=>db.execute(
+    "UPDATE tax_rule_source_reviews SET review_status='REVIEWED', reviewed_by_user_id=? WHERE source_code=?",
+    [f.userId,sourceCode]
+  ));
+  const [state]=await db.execute<RowDataPacket[]>(
+    "SELECT review_status,reviewed_at FROM tax_rule_source_reviews WHERE source_code=?",
+    [sourceCode]
+  );
+  assert.equal(state[0]?.review_status,"DRAFT");
+  assert.equal(state[0]?.reviewed_at,null);
+});
+test("missing reviewer on a REVIEWED source is rejected by read-side evidence gate",async()=>{
+  const f=await fixture(),sourceCode="MISSING_REVIEWER_"+uid().replace(/-/g,"");
+  await reviewSource(f,"REVIEWED",{code:sourceCode});
+  // MySQL permits NULL in a nullable FK; the review workflow must never do
+  // this, and the read-side gate must reject it rather than display approval.
+  await db.execute(
+    "UPDATE tax_rule_source_reviews SET reviewed_by_user_id=NULL WHERE source_code=?",
+    [sourceCode]
+  );
+  try{
+    await assert.rejects(()=>getTaxSourceCoverage({
+      businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+    }),code("TAX_SOURCE_REVIEW_EVIDENCE_INVALID"));
+  }finally{
+    await db.execute(
+      "UPDATE tax_rule_source_reviews SET review_status='REVOKED' WHERE source_code=?",
+      [sourceCode]
+    );
+  }
+});
 test("untrusted or malformed reviewed source links fail closed",async()=>{
   const f=await fixture(),sourceCode="UNTRUSTED_"+uid().replace(/-/g,"");
   await reviewSource(f,"REVIEWED",{
