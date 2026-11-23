@@ -591,6 +591,22 @@ test("HTTP endpoint requires auth, strict query, tenant rights and guarded intak
       headers:{Cookie:cookie},
     })).status,400);
     assert.equal((await fetch(sourcesUrl,{method:"POST",headers:{Cookie:cookie}})).status,405);
+    const checklistUrl=base+"/api/taxes/businesses/"+f.businessId+
+      "/review-checklist?assessmentYearStart=2026";
+    assert.equal((await fetch(checklistUrl)).status,401);
+    const checklistBefore=await fetch(checklistUrl,{headers:{Cookie:cookie}});
+    assert.equal(checklistBefore.status,200);
+    const checklistEmpty=await checklistBefore.json() as {
+      checklist:{answersMissing:number;taxPayableLkr:null;taxCalculationEnabled:false};
+    };
+    assert.equal(checklistEmpty.checklist.answersMissing,7);
+    assert.equal(checklistEmpty.checklist.taxPayableLkr,null);
+    assert.equal(checklistEmpty.checklist.taxCalculationEnabled,false);
+    assert.equal((await fetch(checklistUrl+"&rate=15",{headers:{Cookie:cookie}})).status,400);
+    assert.equal((await fetch(checklistUrl.replace(f.businessId,other.businessId),{
+      headers:{Cookie:cookie},
+    })).status,403);
+    assert.equal((await fetch(checklistUrl,{method:"POST",headers:{Cookie:cookie}})).status,405);
     const intakeUrl=base+"/api/taxes/businesses/"+f.businessId+
       "/intake?assessmentYearStart=2026";
     assert.equal((await fetch(intakeUrl)).status,401);
@@ -619,6 +635,17 @@ test("HTTP endpoint requires auth, strict query, tenant rights and guarded intak
     const savedBody=await saved.json() as {intake:{revision:number;status:string}};
     assert.equal(savedBody.intake.revision,1);
     assert.equal(savedBody.intake.status,"UNVERIFIED_DRAFT");
+    const checklistAfter=await fetch(checklistUrl,{headers:{Cookie:cookie}});
+    assert.equal(checklistAfter.status,200);
+    const checklistSaved=await checklistAfter.json() as {
+      checklist:{answersProvided:number;answersMissing:number;
+        allDeclarationsVerified:false;taxPayableLkr:null;draftRevision:number};
+    };
+    assert.equal(checklistSaved.checklist.answersProvided,2);
+    assert.equal(checklistSaved.checklist.answersMissing,5);
+    assert.equal(checklistSaved.checklist.allDeclarationsVerified,false);
+    assert.equal(checklistSaved.checklist.taxPayableLkr,null);
+    assert.equal(checklistSaved.checklist.draftRevision,1);
     assert.equal((await fetch(intakeSaveUrl,{
       method:"PUT",headers:{Cookie:cookie,Origin:"http://localhost:5173",
         "Content-Type":"application/json"},
