@@ -9,3 +9,10 @@
 .noteto-tax-intake p[role="status"]{color:#164d4a;font-weight:650}
 .noteto-tax-intake p[role="alert"]{color:#992a2a}
 .tax-intake-notice{background:#fff9ec;border-left:3px solid #b89755;border-radius:7px;color:#775a2f;padding:12px;font-size:13px;line-height:1.5}
+
+.tax-review-checklist{display:grid;gap:10px;border:1px solid #c6dbd3;border-radius:12px;background:#fff;padding:14px}
+.tax-review-checklist h4,.tax-review-checklist p{margin:0}
+.tax-review-checklist ul{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.tax-review-checklist li{display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap;padding:9px;border-bottom:1px solid #e1ebe6}
+.tax-review-checklist small{color:#4a7a74}
+.tax-review-disclaimer{font-size:13px;line-height:1.5;background:#fff7e8;border-left:3px solid #b89755;padding:11px;border-radius:6px}
