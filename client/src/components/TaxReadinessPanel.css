@@ -1,0 +1,15 @@
+/* F.17.4a private tax readiness, not a tax calculator */
+.noteto-tax-ready{display:grid;gap:14px;padding-top:16px;border-top:2px solid #c3ddd5;color:#164d4a}
+.noteto-tax-ready header{border:1px solid #c5ddce;background:#eff7f3;border-radius:14px;padding:18px}
+.noteto-tax-ready header h2{margin:0 0 7px;font-size:20px}
+.noteto-tax-ready header p{margin:0;line-height:1.5}
+.tax-ready-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end;padding:14px;border:1px solid #c9e0d5;border-radius:12px}
+.tax-ready-controls label{display:grid;gap:7px;font-weight:650}
+.tax-ready-controls select{padding:10px;border-radius:8px;border:1px solid #a9c7bd;background:white;color:#164d4a;font:inherit;min-width:160px}
+.tax-ready-controls button{margin:0;width:auto}
+.tax-ready-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.tax-ready-metrics>div{padding:14px;border:1px solid #c9ddd0;background:#f7fbf8;border-radius:12px;display:grid;gap:8px}
+.tax-ready-metrics span{font-size:13px;color:#4a7a74}
+.tax-ready-metrics strong{font-size:19px;overflow-wrap:anywhere}
+.tax-ready-warning{background:#fffaed;border-left:3px solid #b89755;color:#78552b;line-height:1.5;border-radius:8px;padding:12px;margin:0}
+@media(max-width:700px){.tax-ready-metrics{grid-template-columns:1fr}.tax-ready-controls{display:grid}}
