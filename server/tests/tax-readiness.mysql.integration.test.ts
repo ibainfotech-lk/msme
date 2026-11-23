@@ -9,6 +9,7 @@ import session from "express-session";
 import mysql,{type RowDataPacket} from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import taxRoutes from "../src/modules/taxes/tax-readiness.routes";
+import { getTaxSourceCoverage } from "../src/modules/taxes/tax-rule-source-coverage.service";
 import { viewTaxReadiness,TaxReadinessError } from "../src/modules/taxes/tax-readiness.service";
 import { createCashEntry } from "../src/modules/transactions/core-cashbook.service";
 import { issueInvoice } from "../src/modules/invoices/invoice-issuance.service";
@@ -41,7 +42,7 @@ before(async()=>{
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
   assert.equal(Number((await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
-  ))[0]?.n),21);
+  ))[0]?.n),22);
   for(const key of ["taxes.read","transactions.create","invoices.create"]){
     await db.execute(
       "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
@@ -242,6 +243,105 @@ test("production and disabled feature reject before DB connection",async()=>{
     process.env.NOTETO_F17_TAX_READINESS_ENABLED="true";
   }
 });
+async function reviewSource(
+  f:Fixture,
+  status:"DRAFT"|"REVIEWED"|"REVOKED",
+  options:{code?:string;scope?:"INDIVIDUAL"|"COMPANY"|"OTHER_ENTITY";
+    year?:number;from?:string;to?:string;url?:string}={}
+){
+  const code=options.code??("CI_TAX_"+uid().replace(/-/g,""));
+  const reviewer=status==="DRAFT"?null:f.userId;
+  await db.execute(
+    [
+      "INSERT INTO tax_rule_source_reviews",
+      "(id,source_code,revision,taxpayer_scope,assessment_year_start,",
+      "effective_from,effective_to,source_title,source_uri,source_sha256,",
+      "review_status,reviewed_by_user_id,reviewed_at,review_note)",
+      "VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,",
+      "IF(?='DRAFT',NULL,UTC_TIMESTAMP(3)), 'CI-only evidence')",
+    ].join(" "),[
+      uid(),code,options.scope??"INDIVIDUAL",options.year??2026,
+      options.from??"2026-04-01",options.to??"2027-03-31",
+      "IRD statutory source evidence - CI only",
+      options.url??"https://www.ird.gov.lk/en/Type%20of%20Taxes/SitePages/Income%20Tax.aspx",
+      "a".repeat(64),status,reviewer,status,
+    ]
+  );
+}
+test("legal evidence registry starts empty: no reviewed rules, no tax due",async()=>{
+  const f=await fixture();
+  const result=await getTaxSourceCoverage({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  });
+  // Shared catalog can contain rows from parallel suites; filter results
+  // specifically based on fixtures created after this test if needed.
+  assert.equal(result.taxPayableLkr,null);
+  assert.equal(result.taxableIncomeLkr,null);
+  assert.equal(result.taxCalculationEnabled,false);
+  assert.equal(result.taxRatesReviewedForThisCustomer,false);
+  assert.equal(result.taxpayerEligibilityConfirmed,false);
+  assert.equal(result.rulesSeededAutomatically,false);
+});
+test("draft and revoked source records cannot masquerade as reviewed evidence",async()=>{
+  const f=await fixture();
+  const draftCode="DRAFT_"+uid().replace(/-/g,"");
+  const revokedCode="REVOKED_"+uid().replace(/-/g,"");
+  await reviewSource(f,"DRAFT",{code:draftCode});
+  await reviewSource(f,"REVOKED",{code:revokedCode});
+  const result=await getTaxSourceCoverage({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  });
+  assert.ok(!result.documents.some(x=>x.sourceCode===draftCode));
+  assert.ok(!result.documents.some(x=>x.sourceCode===revokedCode));
+  assert.equal(result.taxPayableLkr,null);
+});
+test("only reviewed and effective legal sources surface with provenance",async()=>{
+  const f=await fixture();
+  const reviewedCode="REVIEWED_"+uid().replace(/-/g,"");
+  const oldCode="EXPIRED_"+uid().replace(/-/g,"");
+  await reviewSource(f,"REVIEWED",{code:reviewedCode});
+  await reviewSource(f,"REVIEWED",{
+    code:oldCode,from:"2025-01-01",to:"2025-03-31",
+  });
+  const result=await getTaxSourceCoverage({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  });
+  const found=result.documents.find(x=>x.sourceCode===reviewedCode);
+  assert.ok(found);
+  assert.equal(found.revision,1);
+  assert.equal(found.sourceSha256,"a".repeat(64));
+  assert.equal(found.taxpayerScope,"INDIVIDUAL");
+  assert.ok(!result.documents.some(x=>x.sourceCode===oldCode));
+  assert.equal(result.legalSourceReviewAvailable,true);
+  assert.equal(result.taxPayableLkr,null);
+  assert.equal(result.reviewRequired,true);
+});
+test("untrusted or malformed reviewed source links fail closed",async()=>{
+  const f=await fixture();
+  await reviewSource(f,"REVIEWED",{
+    code:"UNTRUSTED_"+uid().replace(/-/g,""),
+    url:"https://example.com/tax-law",
+  });
+  await assert.rejects(()=>getTaxSourceCoverage({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  }),code("TAX_SOURCE_REVIEW_EVIDENCE_INVALID"));
+});
+test("tax source coverage rejects unauthorized user, holds, production mode",async()=>{
+  const f=await fixture({permissions:["transactions.create"]});
+  await assert.rejects(()=>getTaxSourceCoverage({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  }),code("TAX_PERMISSION_DENIED"));
+  const held=await fixture({status:"PAST_DUE"});
+  await assert.rejects(()=>getTaxSourceCoverage({
+    businessId:held.businessId,userId:held.userId,assessmentYearStart:2026,
+  }),code("TAX_SUBSCRIPTION_NOT_ELIGIBLE"));
+  try{
+    process.env.NODE_ENV="production";
+    await assert.rejects(()=>getTaxSourceCoverage({
+      businessId:held.businessId,userId:held.userId,assessmentYearStart:2026,
+    },async()=>{throw Error("DB_CALLED");}),code("TAX_READINESS_DISABLED"));
+  }finally{process.env.NODE_ENV="development";}
+});
 test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",async()=>{
   const f=await fixture(),other=await fixture(),nonce=uid();
   const app=express();
@@ -282,6 +382,15 @@ test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",asy
     assert.equal((await fetch(url.replace(f.businessId,other.businessId),{
       headers:{Cookie:cookie},
     })).status,403);
+    const sourcesUrl=base+"/api/taxes/businesses/"+f.businessId+
+      "/sources?assessmentYearStart=2026";
+    const coverageResponse=await fetch(sourcesUrl,{headers:{Cookie:cookie}});
+    // An unrelated malformed evidence fixture causes deliberate fail-close.
+    assert.ok([200,409].includes(coverageResponse.status));
+    assert.equal((await fetch(sourcesUrl+"&rate=0",{
+      headers:{Cookie:cookie},
+    })).status,400);
+    assert.equal((await fetch(sourcesUrl,{method:"POST",headers:{Cookie:cookie}})).status,405);
     assert.equal((await fetch(url,{method:"POST",headers:{Cookie:cookie}})).status,405);
     try{
       process.env.NODE_ENV="production";
