@@ -1,0 +1,293 @@
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { after,before,test } from "node:test";
+import express from "express";
+import session from "express-session";
+import mysql,{type RowDataPacket} from "mysql2/promise";
+import runtimePool from "../src/config/database";
+import taxRoutes from "../src/modules/taxes/tax-readiness.routes";
+import { viewTaxReadiness,TaxReadinessError } from "../src/modules/taxes/tax-readiness.service";
+import { createCashEntry } from "../src/modules/transactions/core-cashbook.service";
+import { issueInvoice } from "../src/modules/invoices/invoice-issuance.service";
+
+const ci=process.env.CI==="true"&&process.env.GITHUB_ACTIONS==="true"&&
+  process.env.RUNNER_OS==="Linux"&&process.env.GITHUB_REPOSITORY==="ibainfotech-lk/msme"&&
+  process.env.NODE_ENV==="development"&&
+  process.env.NOTETO_CI_DISPOSABLE_DB==="ONLY_THE_EPHEMERAL_MYSQL84_SERVICE"&&
+  process.env.DB_HOST==="127.0.0.1"&&process.env.DB_PORT==="3307"&&
+  process.env.DB_NAME==="noteto_dev"&&process.env.DB_USER==="noteto_services"&&
+  process.env.DB_PASSWORD==="ci_dummy_unused_password";
+if(!ci)throw Error("STOP: tax-readiness integration tests require disposable CI MySQL 8.4");
+process.env.NOTETO_F17_TAX_READINESS_ENABLED="true";
+process.env.NOTETO_F17_BOOKKEEPING_ENABLED="true";
+process.env.NOTETO_F17_INVOICING_ENABLED="true";
+const db=mysql.createPool({
+  host:"127.0.0.1",port:3307,user:"noteto_services",
+  password:"ci_dummy_unused_password",database:"noteto_dev",timezone:"Z",
+  decimalNumbers:false,connectionLimit:8,
+});
+const uid=()=>randomUUID();
+interface Row extends RowDataPacket { n?:number; token?:string }
+async function rows(sql:string,args:unknown[]=[]):Promise<Row[]>{
+  const [r]=await db.execute<Row[]>(sql,args);return r;
+}
+after(async()=>{await db.end();await runtimePool.end();});
+before(async()=>{
+  assert.equal((await rows("SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1"))[0]?.token,
+    "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
+  assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
+  ))[0]?.n),21);
+  for(const key of ["taxes.read","transactions.create","invoices.create"]){
+    await db.execute(
+      "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
+      [uid(),key,"F17.4 private tax preparation"]
+    );
+  }
+});
+type Kind="SOLE_PROPRIETOR"|"PRIVATE_LIMITED"|"COMMUNITY_ORGANIZATION";
+interface Fixture{businessId:string;userId:string;subscriptionId:string;kind:Kind}
+async function fixture(o:{
+  kind?:Kind;status?:"ACTIVE"|"TRIALING"|"PAST_DUE";
+  businessStatus?:"ACTIVE"|"SUSPENDED";expired?:boolean;
+  permissions?:string[];
+}={}):Promise<Fixture>{
+  const businessId=uid(),userId=uid(),subscriptionId=uid(),planId=uid(),roleId=uid();
+  const kind=o.kind??"SOLE_PROPRIETOR";
+  const con=await db.getConnection();
+  try{
+    await con.beginTransaction();
+    await con.execute(
+      "INSERT INTO users(id,phone,status,updated_at) VALUES (?,?,'ACTIVE',UTC_TIMESTAMP(3))",
+      [userId,"+9477"+String(Math.floor(Math.random()*1e7)).padStart(7,"0")]
+    );
+    await con.execute(
+      "INSERT INTO businesses(id,name,registration_type,status,updated_at) VALUES (?,'CI TAX READINESS',?,?,UTC_TIMESTAMP(3))",
+      [businessId,kind,o.businessStatus??"ACTIVE"]
+    );
+    await con.execute(
+      "INSERT INTO roles(id,business_id,name,is_system_role,updated_at) VALUES (?,?,'OWNER',1,UTC_TIMESTAMP(3))",
+      [roleId,businessId]
+    );
+    for(const key of o.permissions??["taxes.read","transactions.create","invoices.create"]){
+      await con.execute(
+        "INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE `key`=?",
+        [roleId,key]
+      );
+    }
+    await con.execute(
+      "INSERT INTO business_memberships(id,business_id,user_id,role_id,status,updated_at) VALUES (?,?,?,?,'ACTIVE',UTC_TIMESTAMP(3))",
+      [uid(),businessId,userId,roleId]
+    );
+    await con.execute(
+      ["INSERT INTO subscription_plans",
+       "(id,code,name,price_lkr,billing_interval,trial_days,invoice_limit,is_active,updated_at)",
+       "VALUES (?,?,'CI TAX',499.00,'MONTHLY',0,30,1,UTC_TIMESTAMP(3))"].join(" "),
+      [planId,"CI_TAX_"+uid().replace(/-/g,"").toUpperCase()]
+    );
+    await con.execute(
+      ["INSERT INTO business_subscriptions",
+       "(id,business_id,plan_id,status,starts_at,current_period_end,trial_ends_at,held_at,updated_at)",
+       "VALUES (?,?,?,?,'2026-09-01 00:00:00.000',?,?,?,UTC_TIMESTAMP(3))"].join(" "),
+      [subscriptionId,businessId,planId,o.status??"ACTIVE",
+       o.expired?"2026-10-01 00:00:00.000":"2027-12-31 23:59:59.000",
+       o.expired?"2026-10-01 00:00:00.000":"2027-12-31 23:59:59.000",
+       o.status==="PAST_DUE"?"2026-11-01 00:00:00.000":null]
+    );
+    await con.execute(
+      "UPDATE businesses SET current_subscription_id=? WHERE id=?",
+      [subscriptionId,businessId]
+    );
+    await con.commit();
+  }catch(e){await con.rollback();throw e;}finally{con.release();}
+  return {businessId,userId,subscriptionId,kind};
+}
+async function cash(f:Fixture,type:"INCOME"|"EXPENSE",amountLkr:string,occurredOn:string){
+  return createCashEntry({
+    businessId:f.businessId,userId:f.userId,
+    transactionType:type,amountLkr,occurredOn,category:"Trading",
+    description:"Actual funds confirmed",cashConfirmed:true,
+    idempotencyKey:"tax-test-cash-"+uid(),
+  });
+}
+const query=(f:Fixture,assessmentYearStart=2026)=>viewTaxReadiness({
+  businessId:f.businessId,userId:f.userId,assessmentYearStart,
+});
+function code(expected:string){
+  return (e:unknown)=>{
+    assert.ok(e instanceof TaxReadinessError);
+    assert.equal(e.code,expected);return true;
+  };
+}
+test("April–March YA uses only recorded cash surplus and never manufactures taxable income",async()=>{
+  const f=await fixture();
+  await cash(f,"INCOME","1000.55","2026-11-20");
+  await cash(f,"EXPENSE","325.15","2026-11-20");
+  const result=await query(f);
+  assert.equal(result.assessmentYear,"2026/2027");
+  assert.equal(result.assessmentStart,"2026-04-01");
+  assert.equal(result.assessmentEnd,"2027-03-31");
+  assert.equal(result.cashReceivedLkr,"1000.55");
+  assert.equal(result.cashPaidLkr,"325.15");
+  assert.equal(result.cashMovementSurplusLkr,"675.40");
+  assert.equal(result.incomeEntries,1);
+  assert.equal(result.expenseEntries,1);
+  assert.equal(result.taxableIncomeLkr,null);
+  assert.equal(result.taxPayableLkr,null);
+  assert.equal(result.paymentDueLkr,null);
+  assert.equal(result.taxRatePercent,null);
+  assert.equal(result.personalReliefAppliedLkr,null);
+  assert.equal(result.personalReliefEligibility,"UNVERIFIED");
+  assert.equal(result.status,"REVIEW_REQUIRED");
+  assert.equal(result.completeAssessmentYear,false);
+  assert.equal(result.taxReturnOrPaymentAuthorized,false);
+});
+test("all registration types require tax review, not a shared tax threshold",async()=>{
+  for(const kind of [
+    "SOLE_PROPRIETOR","PRIVATE_LIMITED","COMMUNITY_ORGANIZATION",
+  ] as const){
+    const f=await fixture({kind});
+    const r=await query(f);
+    assert.equal(r.registrationType,kind);
+    assert.equal(r.taxPayableLkr,null);
+    assert.equal(r.requiresQualifiedSriLankanTaxReview,true);
+  }
+});
+test("2025/2026 is April 2025–March 2026, not a calendar year",async()=>{
+  const f=await fixture();
+  await cash(f,"INCOME","100.00","2025-12-30");
+  await cash(f,"INCOME","50.00","2026-04-01");
+  const old=await query(f,2025),current=await query(f,2026);
+  assert.equal(old.assessmentStart,"2025-04-01");
+  assert.equal(old.assessmentEnd,"2026-03-31");
+  assert.equal(old.cashReceivedLkr,"100.00");
+  assert.equal(old.completeAssessmentYear,true);
+  assert.equal(current.cashReceivedLkr,"50.00");
+});
+test("unpaid issued invoice is not a cash receipt or a tax liability",async()=>{
+  const f=await fixture();
+  await issueInvoice({
+    businessId:f.businessId,userId:f.userId,
+    customerName:"Unpaid business client",idempotencyKey:"tax-invoice-"+uid(),
+    lines:[{description:"Products awaiting payment",quantity:"1.00",
+      unitPriceLkr:"9999.00"}],
+  });
+  const r=await query(f);
+  assert.equal(r.cashReceivedLkr,"0.00");
+  assert.equal(r.cashMovementSurplusLkr,"0.00");
+  assert.equal(r.invoicesWithoutVerifiedCashExcluded,true);
+  assert.equal(r.taxPayableLkr,null);
+});
+test("cash spent can exceed cash received without negative tax payable inference",async()=>{
+  const f=await fixture();
+  await cash(f,"EXPENSE","500.00","2026-11-20");
+  const r=await query(f);
+  assert.equal(r.cashMovementSurplusLkr,"-500.00");
+  assert.equal(r.taxPayableLkr,null);
+});
+test("tenant authorization and taxes.read are mandatory",async()=>{
+  const a=await fixture(),b=await fixture();
+  await assert.rejects(()=>viewTaxReadiness({
+    businessId:b.businessId,userId:a.userId,assessmentYearStart:2026,
+  }),code("TAX_PERMISSION_DENIED"));
+  const noTax=await fixture({permissions:["transactions.create"]});
+  await assert.rejects(()=>query(noTax),code("TAX_PERMISSION_DENIED"));
+});
+test("held, expired, suspended accounts cannot access live tax preparation",async()=>{
+  for(const f of [
+    await fixture({status:"PAST_DUE"}),
+    await fixture({expired:true}),
+    await fixture({businessStatus:"SUSPENDED"}),
+  ]){
+    await assert.rejects(()=>query(f),e=>{
+      assert.ok(e instanceof TaxReadinessError);
+      assert.ok(["TAX_SUBSCRIPTION_NOT_ELIGIBLE","TAX_BUSINESS_NOT_ACTIVE"].includes(e.code));
+      return true;
+    });
+  }
+});
+test("a current TRIALING business can view tax preparation without tax payable",async()=>{
+  const f=await fixture({status:"TRIALING"});
+  const result=await query(f);
+  assert.equal(result.status,"REVIEW_REQUIRED");
+  assert.equal(result.taxPayableLkr,null);
+});
+test("invalid assessment year and future assessment fail before DB",async()=>{
+  const f=await fixture();
+  for(const value of [2024,2099,2026.5]){
+    await assert.rejects(()=>viewTaxReadiness({
+      businessId:f.businessId,userId:f.userId,assessmentYearStart:value,
+    },async()=>{throw Error("UNEXPECTED_DB");}),code("INVALID_TAX_READINESS_REQUEST"));
+  }
+});
+test("production and disabled feature reject before DB connection",async()=>{
+  const f=await fixture();
+  const request={businessId:f.businessId,userId:f.userId,assessmentYearStart:2026};
+  try{
+    process.env.NODE_ENV="production";
+    await assert.rejects(()=>viewTaxReadiness(request,async()=>{
+      throw Error("UNEXPECTED_DB");
+    }),code("TAX_READINESS_DISABLED"));
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_TAX_READINESS_ENABLED="false";
+    await assert.rejects(()=>viewTaxReadiness(request,async()=>{
+      throw Error("UNEXPECTED_DB");
+    }),code("TAX_READINESS_DISABLED"));
+  }finally{
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_TAX_READINESS_ENABLED="true";
+  }
+});
+test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",async()=>{
+  const f=await fixture(),other=await fixture(),nonce=uid();
+  const app=express();
+  app.use(express.json({limit:"20kb"}));
+  app.use(session({
+    secret:"noteto-tax-ci-only-long-test-session-secret",
+    resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:"lax"},
+  }));
+  app.post("/__ci/login",(req,res,next)=>{
+    if(req.get("X-CI-Nonce")!==nonce){res.sendStatus(403);return;}
+    req.session.userId=f.userId;
+    req.session.save(e=>e?next(e):res.json({success:true}));
+  });
+  app.use("/api/taxes",taxRoutes);
+  const server=createServer(app);
+  try{
+    await new Promise<void>((resolve,reject)=>{
+      server.once("error",reject);server.listen(0,"127.0.0.1",resolve);
+    });
+    const base="http://127.0.0.1:"+(server.address() as AddressInfo).port;
+    const url=base+"/api/taxes/businesses/"+f.businessId+
+      "/readiness?assessmentYearStart=2026";
+    assert.equal((await fetch(url)).status,401);
+    const login=await fetch(base+"/__ci/login",{
+      method:"POST",headers:{"X-CI-Nonce":nonce},
+    });
+    assert.equal(login.status,200);
+    const cookie=login.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie);
+    const response=await fetch(url,{headers:{Cookie:cookie}});
+    assert.equal(response.status,200);
+    const body=await response.json() as {
+      readiness:{status:string;taxPayableLkr:string|null};
+    };
+    assert.equal(body.readiness.status,"REVIEW_REQUIRED");
+    assert.equal(body.readiness.taxPayableLkr,null);
+    assert.equal((await fetch(url+"&taxRate=0",{headers:{Cookie:cookie}})).status,400);
+    assert.equal((await fetch(url.replace(f.businessId,other.businessId),{
+      headers:{Cookie:cookie},
+    })).status,403);
+    assert.equal((await fetch(url,{method:"POST",headers:{Cookie:cookie}})).status,405);
+    try{
+      process.env.NODE_ENV="production";
+      assert.equal((await fetch(url,{headers:{Cookie:cookie}})).status,503);
+    }finally{process.env.NODE_ENV="development";}
+  }finally{
+    await new Promise<void>(resolve=>server.close(()=>resolve()));
+  }
+});
