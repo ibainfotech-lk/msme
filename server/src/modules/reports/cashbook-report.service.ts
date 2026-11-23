@@ -89,6 +89,14 @@ const YEAR = /^\d{4}$/;
 const CENTS = /^\d+\.\d{2}$/;
 const MAX_REPORT_GROUPS = 10000;
 type ConnectionFactory = () => Promise<PoolConnection>;
+/**
+ * Internal-only, same-transaction persistence hook used by immutable archive
+ * generation. Runs after the report is aggregated and BEFORE commit, under
+ * the same business/subscription lock as cashbook changes.
+ */
+export type ReportBeforeCommit = (
+  connection: PoolConnection, report: CashbookReportPreview, generatedAt: Date
+) => Promise<void>;
 function enabled(): void {
   if (process.env.NODE_ENV !== "development" ||
       process.env.NOTETO_F17_REPORT_PREVIEW_ENABLED !== "true") {
@@ -194,7 +202,8 @@ function put(map:Map<string,TotalInCents>,key:string,type:"INCOME"|"EXPENSE",
  */
 export async function previewCashbookReport(
   input:ReportRequest,
-  getConnection:ConnectionFactory=()=>pool.getConnection()
+  getConnection:ConnectionFactory=()=>pool.getConnection(),
+  beforeCommit?:ReportBeforeCommit
 ):Promise<CashbookReportPreview> {
   enabled();
   if(!UUID.test(input.businessId)||!UUID.test(input.userId) ||
@@ -311,8 +320,7 @@ export async function previewCashbookReport(
     }
     category.sort((a,b)=>a.transactionType.localeCompare(b.transactionType) ||
       a.category.localeCompare(b.category));
-    await con.commit();started=false;
-    return {
+    const result:CashbookReportPreview = {
       reportType:input.period,periodKey:input.periodKey,
       periodStart:bounds.start,periodEnd:bounds.periodEnd,
       currency:"LKR",basis:"CASH",timezone:"Asia/Colombo",
@@ -321,6 +329,9 @@ export async function previewCashbookReport(
       reconciledOpeningBalanceAvailable:false,cashbookOnly:true,
       invoiceAmountsIncluded:false,reportSnapshotSaved:false,pdfGenerated:false,
     };
+    if(beforeCommit)await beforeCommit(con,result,now);
+    await con.commit();started=false;
+    return result;
   }catch(e){
     if(started)await con.rollback();
     throw e;
