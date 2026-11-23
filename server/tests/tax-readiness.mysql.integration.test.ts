@@ -317,14 +317,21 @@ test("only reviewed and effective legal sources surface with provenance",async()
   assert.equal(result.reviewRequired,true);
 });
 test("untrusted or malformed reviewed source links fail closed",async()=>{
-  const f=await fixture();
+  const f=await fixture(),sourceCode="UNTRUSTED_"+uid().replace(/-/g,"");
   await reviewSource(f,"REVIEWED",{
-    code:"UNTRUSTED_"+uid().replace(/-/g,""),
-    url:"https://example.com/tax-law",
+    code:sourceCode,url:"https://example.com/tax-law",
   });
-  await assert.rejects(()=>getTaxSourceCoverage({
-    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
-  }),code("TAX_SOURCE_REVIEW_EVIDENCE_INVALID"));
+  try{
+    await assert.rejects(()=>getTaxSourceCoverage({
+      businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+    }),code("TAX_SOURCE_REVIEW_EVIDENCE_INVALID"));
+  }finally{
+    // CI-only disposable fixture cleanup; no customer records modified.
+    await db.execute(
+      "UPDATE tax_rule_source_reviews SET review_status='REVOKED' WHERE source_code=?",
+      [sourceCode]
+    );
+  }
 });
 test("tax source coverage rejects unauthorized user, holds, production mode",async()=>{
   const f=await fixture({permissions:["transactions.create"]});
@@ -385,8 +392,12 @@ test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",asy
     const sourcesUrl=base+"/api/taxes/businesses/"+f.businessId+
       "/sources?assessmentYearStart=2026";
     const coverageResponse=await fetch(sourcesUrl,{headers:{Cookie:cookie}});
-    // An unrelated malformed evidence fixture causes deliberate fail-close.
-    assert.ok([200,409].includes(coverageResponse.status));
+    assert.equal(coverageResponse.status,200);
+    const coverageData=await coverageResponse.json() as {
+      coverage:{taxPayableLkr:null;taxCalculationEnabled:false};
+    };
+    assert.equal(coverageData.coverage.taxPayableLkr,null);
+    assert.equal(coverageData.coverage.taxCalculationEnabled,false);
     assert.equal((await fetch(sourcesUrl+"&rate=0",{
       headers:{Cookie:cookie},
     })).status,400);
