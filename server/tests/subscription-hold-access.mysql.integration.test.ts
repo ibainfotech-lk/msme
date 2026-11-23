@@ -47,7 +47,7 @@ before(async () => {
   assert.match(String(version[0]?.version), /^8\.4\./);
   assert.equal(version[0]?.database_name, "noteto_dev");
   const migrations = await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
-  assert.equal(Number(migrations[0]?.n), 22);
+  assert.equal(Number(migrations[0]?.n), 23);
   for (const key of ["business.read", "business.manage", "transactions.read",
     "transactions.update", "transactions.create", "reports.read"]) {
     await db.execute(
