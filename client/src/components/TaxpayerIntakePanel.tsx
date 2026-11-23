@@ -2,6 +2,7 @@ import {useEffect,useState} from "react";
 import type {FormEvent} from "react";
 import type {Language} from "../locales";
 import "./TaxpayerIntakePanel.css";
+import TaxpayerReviewChecklist from "./TaxpayerReviewChecklist";
 type Answer="UNKNOWN"|"YES"|"NO"|"NOT_SURE";
 type Category="UNKNOWN"|"INDIVIDUAL"|"COMPANY"|"OTHER_ENTITY"|"NOT_SURE";
 type Residency="UNKNOWN"|"RESIDENT"|"NON_RESIDENT"|"NOT_SURE";
@@ -89,6 +90,7 @@ export default function TaxpayerIntakePanel({businessId,year,language}:Props){
   const [revision,setRevision]=useState<number|null>(null);
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
   const [status,setStatus]=useState(""),[error,setError]=useState("");
+  const [refreshKey,setRefreshKey]=useState(0);
   const endpoint="/api/taxes/businesses/"+encodeURIComponent(businessId)+"/intake";
   useEffect(()=>{
     let active=true;
@@ -125,6 +127,7 @@ export default function TaxpayerIntakePanel({businessId,year,language}:Props){
           body.code??"TAX_INTAKE_SAVE_FAILED");
       }
       setRevision(body.intake.revision);setStatus(t.ready);
+      setRefreshKey(current=>current+1);
     }catch(e){setError(e instanceof Error?e.message:"TAX_INTAKE_SAVE_FAILED");}
     finally{setBusy(false);}
   };
@@ -160,5 +163,7 @@ export default function TaxpayerIntakePanel({businessId,year,language}:Props){
     {status&&<p role="status">{status}</p>}
     {error&&<p role="alert">{error}</p>}
     <p className="tax-intake-notice">{t.notice}</p>
+    <TaxpayerReviewChecklist businessId={businessId} year={year}
+      language={language} refreshKey={refreshKey}/>
   </section>;
 }
