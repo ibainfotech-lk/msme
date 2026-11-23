@@ -5,6 +5,7 @@ import { requireCheckoutOrigin } from "../../middleware/checkout-origin.middlewa
 import { viewTaxReadiness,TaxReadinessError } from "./tax-readiness.service";
 import { getTaxSourceCoverage } from "./tax-rule-source-coverage.service";
 import { readTaxIntakeDraft,saveTaxIntakeDraft,type TaxIntakeClaims } from "./taxpayer-intake-draft.service";
+import { buildTaxReviewChecklist } from "./taxpayer-review-checklist.policy";
 
 const router=Router();
 /** F.17.4a — read-only and always disabled in production. */
@@ -75,6 +76,22 @@ router.get("/businesses/:businessId/intake",async(req,res,next)=>{
     });
     res.set("Cache-Control","private, no-store");
     res.json({success:true,intake});
+  }catch(e){failed(e,res,next);}
+});
+router.get("/businesses/:businessId/review-checklist",async(req,res,next)=>{
+  const p=params.safeParse(req.params),q=query.safeParse(req.query);
+  if(!p.success||!q.success){
+    res.status(400).json({success:false,code:"INVALID_TAX_INTAKE_REQUEST"});return;
+  }
+  try{
+    // Reuse the reviewed business/permission/HOLD checks, not a new
+    // permission path. A draft is never independently proof of tax status.
+    const draft=await readTaxIntakeDraft({
+      businessId:p.data.businessId,userId:req.session.userId!,...q.data,
+    });
+    const checklist=buildTaxReviewChecklist(draft);
+    res.set("Cache-Control","private, no-store");
+    res.json({success:true,checklist});
   }catch(e){failed(e,res,next);}
 });
 router.put("/businesses/:businessId/intake",requireCheckoutOrigin,async(req,res,next)=>{
