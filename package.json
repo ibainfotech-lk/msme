@@ -27,6 +27,7 @@
     "test:mysql-core-cashbook": "node --import tsx --test server/tests/core-cashbook.mysql.integration.test.ts",
     "test:mysql-invoice-issuance": "node --import tsx --test server/tests/invoice-issuance.mysql.integration.test.ts",
     "test:mysql-cashbook-reports": "node --import tsx --test server/tests/cashbook-report.mysql.integration.test.ts",
+    "test:mysql-tax-readiness": "node --import tsx --test server/tests/tax-readiness.mysql.integration.test.ts",
     "test:mysql-trial-reservation": "node --import tsx --test server/tests/trial-grant-reservation.mysql.integration.test.ts",
     "test:mysql-promotion-reservation": "node --import tsx --test server/tests/promotion-reservation.mysql.integration.test.ts"
   },
