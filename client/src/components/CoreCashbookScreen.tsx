@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { Language } from "../locales";
 import InvoicePanel from "./InvoicePanel";
 import CashbookReportsPanel from "./CashbookReportsPanel";
+import TaxReadinessPanel from "./TaxReadinessPanel";
 import "./CoreCashbookScreen.css";
 
 type EntryType = "INCOME" | "EXPENSE";
@@ -30,6 +31,8 @@ const invoiceUiEnabled = import.meta.env.DEV &&
   import.meta.env.VITE_NOTETO_F17_INVOICE_UI_ENABLED === "true";
 const reportsUiEnabled = import.meta.env.DEV &&
   import.meta.env.VITE_NOTETO_F17_REPORT_PREVIEW_UI_ENABLED === "true";
+const taxReadinessUiEnabled = import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_F17_TAX_READINESS_UI_ENABLED === "true";
 
 const labels = {
   en: {
@@ -272,6 +275,7 @@ export default function CoreCashbookScreen({
     <p className="cashbook-notice">{t.noReport}</p>
     {invoiceUiEnabled && <InvoicePanel businessId={businessId} language={language} />}
     {reportsUiEnabled && <CashbookReportsPanel businessId={businessId} language={language} />}
+    {taxReadinessUiEnabled && <TaxReadinessPanel businessId={businessId} language={language} />}
     <div className="cashbook-footer">
       <button className="secondary-button" type="button" onClick={()=>void refresh()}
         disabled={loading||busy}>{t.refresh}</button>
