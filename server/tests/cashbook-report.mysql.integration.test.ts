@@ -46,7 +46,7 @@ before(async()=>{
   assert.equal((await rows("SELECT token FROM _noteto_ci_ephemeral_guard LIMIT 1"))[0]?.token,
     "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
-  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n), 22);
+  assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n), 23);
   for(const key of ["reports.generate","reports.read","transactions.create","transactions.update","invoices.create"]){
     await db.execute(
       "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
