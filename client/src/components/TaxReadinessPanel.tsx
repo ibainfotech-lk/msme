@@ -14,6 +14,14 @@ interface Result{
   paymentDueLkr:null;personalReliefEligibility:"UNVERIFIED";
   invoicesWithoutVerifiedCashExcluded:true;
 }
+interface SourceCoverage {
+  status:"NO_REVIEWED_SOURCES"|"REVIEWED_SOURCES_AVAILABLE";
+  reviewRequired:true;taxPayableLkr:null;taxCalculationEnabled:false;
+  taxpayerEligibilityConfirmed:false;
+  documents:Array<{sourceCode:string;revision:number;taxpayerScope:string;
+    sourceTitle:string;sourceUri:string;effectiveFrom:string;effectiveTo:string;
+    sourceSha256:string}>;
+}
 interface Props{businessId:string;language:Language}
 const labels={
   en:{
@@ -25,6 +33,9 @@ const labels={
     personal:"The individual personal-relief threshold is not automatically a business tax exemption.",
     excluded:"Unpaid invoices have not been treated as cash income.",
     noEstimate:"Tax estimate unavailable pending verified taxpayer details and approved tax rules.",
+    sources:"Reviewed legal references",noSources:"No reviewed legal-source records are currently available.",
+    sourcesCaution:"Reviewed documents do not confirm your tax classification, eligible reliefs or tax payable.",
+    sourcesUnavailable:"Reviewed-source registry is unavailable. Tax estimate remains disabled.",
     business:"Business registration",sole:"Sole proprietor",company:"Private limited company",community:"Community organization",
   },
   ta:{
@@ -36,6 +47,10 @@ const labels={
     personal:"தனிநபர் வரி நிவாரணத் தொகை தானாகவே ஒவ்வொரு வணிகத்திற்கும் வரி விலக்காகாது.",
     excluded:"செலுத்தப்படாத விலைப்பட்டியல்கள் பெற்ற பண வருமானமாகக் கணக்கிடப்படவில்லை.",
     noEstimate:"வரி செலுத்த வேண்டிய தொகையை கணக்கிட உறுதிப்படுத்தப்பட்ட விவரங்களும் அங்கீகரிக்கப்பட்ட வரி விதிகளும் தேவை.",
+    sources:"சரிபார்க்கப்பட்ட சட்ட ஆதாரங்கள்",
+    noSources:"சரிபார்க்கப்பட்ட சட்ட ஆதாரப் பதிவுகள் தற்போது இல்லை.",
+    sourcesCaution:"சரிபார்க்கப்பட்ட ஆவணம் உங்கள் வரி வகை, சலுகை அல்லது செலுத்த வேண்டிய வரியை உறுதிசெய்யாது.",
+    sourcesUnavailable:"சட்ட ஆதாரப் பதிவகம் கிடைக்கவில்லை. வரி கணக்கீடு முடக்கப்பட்டுள்ளது.",
     business:"வணிக பதிவு வகை",sole:"தனிநபர் வணிகம்",company:"தனியார் வரையறுக்கப்பட்ட நிறுவனம்",community:"சமூக அமைப்பு",
   },
   si:{
@@ -47,6 +62,10 @@ const labels={
     personal:"පුද්ගලික බදු සහන සීමාව සෑම ව්‍යාපාරයකටම ස්වයංක්‍රීය බදු නිදහසක් නොවේ.",
     excluded:"නොගෙවූ ඉන්වොයිසි ලැබුණු මුදල් ලෙස ගණන්ගෙන නැත.",
     noEstimate:"තහවුරු කළ බදු තොරතුරු සහ අනුමත නීති නොමැතිව බදු ඇස්තමේන්තුවක් ලබාදිය නොහැක.",
+    sources:"සමාලෝචිත නීති මූලාශ්‍ර",
+    noSources:"සමාලෝචිත නීති මූලාශ්‍ර වාර්තා දැනට නොමැත.",
+    sourcesCaution:"සමාලෝචිත ලේඛන මඟින් ඔබේ බදු වර්ගය, සහන හෝ ගෙවිය යුතු බද්ද තහවුරු නොවේ.",
+    sourcesUnavailable:"නීති මූලාශ්‍ර ලේඛනය ලබාගත නොහැක. බදු ගණනය අක්‍රියයි.",
     business:"ව්‍යාපාර ලියාපදිංචිය",sole:"තනි හිමිකරු",company:"පෞද්ගලික සීමිත සමාගම",community:"ප්‍රජා සංවිධානය",
   },
 } satisfies Record<Language,Record<string,string>>;
@@ -68,10 +87,13 @@ export default function TaxReadinessPanel({businessId,language}:Props){
   const t=labels[language],latest=currentAssessmentStart();
   const [year,setYear]=useState(latest);
   const [summary,setSummary]=useState<Result|null>(null);
+  const [sources,setSources]=useState<SourceCoverage|null>(null);
+  const [sourceWarning,setSourceWarning]=useState("");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const check=async(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault();setBusy(true);setError("");setSummary(null);
+    setSources(null);setSourceWarning("");
     try{
       const query=new URLSearchParams({assessmentYearStart:String(year)});
       const response=await fetch(
@@ -89,6 +111,22 @@ export default function TaxReadinessPanel({businessId,language}:Props){
         throw new Error(body.code??"TAX_READINESS_UNAVAILABLE");
       }
       setSummary(body.readiness);
+      try{
+        const sourcesResponse=await fetch(
+          "/api/taxes/businesses/"+encodeURIComponent(businessId)+
+          "/sources?"+query.toString(),{credentials:"include",cache:"no-store"}
+        );
+        const sourceBody=await sourcesResponse.json() as {
+          success?:boolean;coverage?:SourceCoverage;
+        };
+        if(!sourcesResponse.ok||!sourceBody.success||!sourceBody.coverage||
+           sourceBody.coverage.taxPayableLkr!==null ||
+           sourceBody.coverage.taxCalculationEnabled!==false ||
+           sourceBody.coverage.taxpayerEligibilityConfirmed!==false){
+          throw new Error("SOURCE_COVERAGE_UNAVAILABLE");
+        }
+        setSources(sourceBody.coverage);
+      }catch{setSourceWarning(t.sourcesUnavailable);}
     }catch(e){setError(e instanceof Error?e.message:"TAX_READINESS_UNAVAILABLE");}
     finally{setBusy(false);}
   };
@@ -122,6 +160,20 @@ export default function TaxReadinessPanel({businessId,language}:Props){
       <p className="tax-ready-warning">{t.personal}</p>
       <p>{t.excluded}</p>
       <strong>{t.noEstimate}</strong>
+      <div className="tax-source-references">
+        <h3>{t.sources}</h3>
+        <p>{t.sourcesCaution}</p>
+        {sourceWarning&&<p role="status">{sourceWarning}</p>}
+        {sources&&sources.documents.length===0&&<p>{t.noSources}</p>}
+        {sources&&sources.documents.length>0&&<ul>
+          {sources.documents.map((source,index)=><li key={source.sourceCode+source.revision+index}>
+            <a href={source.sourceUri} target="_blank" rel="noopener noreferrer">
+              {source.sourceTitle}
+            </a>
+            <small>{source.taxpayerScope} · {source.effectiveFrom} — {source.effectiveTo}</small>
+          </li>)}
+        </ul>}
+      </div>
     </>}
   </section>;
 }
