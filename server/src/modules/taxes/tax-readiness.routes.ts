@@ -2,6 +2,7 @@ import { Router,type NextFunction,type Response } from "express";
 import { z } from "zod";
 import { requireAuth } from "../../middleware/auth.middleware";
 import { viewTaxReadiness,TaxReadinessError } from "./tax-readiness.service";
+import { getTaxSourceCoverage } from "./tax-rule-source-coverage.service";
 
 const router=Router();
 /** F.17.4a — read-only and always disabled in production. */
@@ -33,6 +34,19 @@ router.get("/businesses/:businessId/readiness",async(req,res,next)=>{
     });
     res.set("Cache-Control","private, no-store");
     res.json({success:true,readiness:result});
+  }catch(e){failed(e,res,next);}
+});
+router.get("/businesses/:businessId/sources",async(req,res,next)=>{
+  const p=params.safeParse(req.params),q=query.safeParse(req.query);
+  if(!p.success||!q.success){
+    res.status(400).json({success:false,code:"INVALID_TAX_READINESS_REQUEST"});return;
+  }
+  try{
+    const result=await getTaxSourceCoverage({
+      businessId:p.data.businessId,userId:req.session.userId!,...q.data,
+    });
+    res.set("Cache-Control","private, no-store");
+    res.json({success:true,coverage:result});
   }catch(e){failed(e,res,next);}
 });
 router.use((_req,res)=>{
