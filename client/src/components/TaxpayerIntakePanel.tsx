@@ -134,8 +134,6 @@ export default function TaxpayerIntakePanel({businessId,year,language}:Props){
     <form onSubmit={e=>void save(e)}>
       {fields.map((key,index)=>{
         const title=t[fieldLabels[index]];
-        const options:keyof typeof copy.en=key==="taxpayerCategoryClaim"?"individual":"unknown";
-        void options;
         const list=key==="taxpayerCategoryClaim"
           ?(["UNKNOWN","INDIVIDUAL","COMPANY","OTHER_ENTITY","NOT_SURE"] as const)
           :key==="residencyClaim"
