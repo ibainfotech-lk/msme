@@ -101,7 +101,8 @@ function asLkr(value:bigint):string {
 }
 export async function viewTaxReadiness(
   input:TaxReadinessRequest,
-  getConnection:ConnectionFactory=()=>pool.getConnection()
+  getConnection:ConnectionFactory=()=>pool.getConnection(),
+  beforeCommit?:(con:PoolConnection,yearStart:string,yearEnd:string)=>Promise<void>
 ):Promise<TaxReadinessResult> {
   enabled();
   const today=colomboToday(new Date());
@@ -198,6 +199,7 @@ export async function viewTaxReadiness(
     }
     if(!Number.isSafeInteger(incomeEntries)||!Number.isSafeInteger(expenseEntries))
       throw new TaxReadinessError("INVALID_CASHBOOK_TOTAL",409);
+    if(beforeCommit)await beforeCommit(con,start,fullYearEnd);
     await con.commit();started=false;
     return {
       status:"REVIEW_REQUIRED",jurisdiction:"LK",
