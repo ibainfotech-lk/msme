@@ -60,7 +60,7 @@ before(async () => {
   assert.match(String(database[0]?.version), /^8\.4\./);
   assert.equal(database[0]?.database_name, "noteto_dev");
   const migrations = await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL");
-  assert.equal(Number(migrations[0]?.n), 21);
+  assert.equal(Number(migrations[0]?.n), 22);
   // Make this suite independent of whether another integration test seeded
   // the business.manage permission earlier in the CI job.
   await db.execute(
