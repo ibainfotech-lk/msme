@@ -31,12 +31,14 @@ CREATE TABLE `tax_rule_source_reviews` (
     CHECK (`revision` >= 1),
   CONSTRAINT `chk_tax_rule_source_effective_dates`
     CHECK (`effective_to` >= `effective_from`),
-  CONSTRAINT `chk_tax_rule_source_review_evidence`
+  -- MySQL 8.4 error 3823: a CHECK cannot refer to a column used by
+  -- the reviewer foreign key's referential action. Check only reviewed_at
+  -- here; validate non-NULL reviewer identity in the restricted review
+  -- workflow and fail-closed read service instead.
+  CONSTRAINT `chk_tax_rule_source_review_timestamp`
     CHECK (
-      (`review_status` = 'DRAFT'
-       AND `reviewed_by_user_id` IS NULL AND `reviewed_at` IS NULL)
+      (`review_status` = 'DRAFT' AND `reviewed_at` IS NULL)
       OR
-      (`review_status` IN ('REVIEWED','REVOKED')
-       AND `reviewed_by_user_id` IS NOT NULL AND `reviewed_at` IS NOT NULL)
+      (`review_status` IN ('REVIEWED','REVOKED') AND `reviewed_at` IS NOT NULL)
     )
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
