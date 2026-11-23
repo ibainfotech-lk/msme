@@ -17,6 +17,7 @@ import reconciliationReviewRoutes from "./modules/payments/payment-reconciliatio
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware";
 import transactionRoutes from "./routes/transaction.routes";
 import invoiceRoutes from "./modules/invoices/invoice.routes";
+import reportRoutes from "./modules/reports/report.routes";
 import heldHistoryRoutes from "./modules/subscriptions/held-history.routes";
 
 
@@ -126,6 +127,7 @@ app.use(
 
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/invoices", invoiceRoutes);
+app.use("/api/reports", reportRoutes);
 
 // Private development-only held-account history adapter.
 // No public production routes, new entries, new invoices or new reports.
