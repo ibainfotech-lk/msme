@@ -10,6 +10,7 @@ import mysql,{type RowDataPacket} from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import taxRoutes from "../src/modules/taxes/tax-readiness.routes";
 import { getTaxSourceCoverage } from "../src/modules/taxes/tax-rule-source-coverage.service";
+import {saveTaxIntakeDraft,readTaxIntakeDraft,TaxIntakeError,type TaxIntakeClaims} from "../src/modules/taxes/taxpayer-intake-draft.service";
 import { viewTaxReadiness,TaxReadinessError } from "../src/modules/taxes/tax-readiness.service";
 import { createCashEntry } from "../src/modules/transactions/core-cashbook.service";
 import { issueInvoice } from "../src/modules/invoices/invoice-issuance.service";
@@ -25,6 +26,7 @@ if(!ci)throw Error("STOP: tax-readiness integration tests require disposable CI 
 process.env.NOTETO_F17_TAX_READINESS_ENABLED="true";
 process.env.NOTETO_F17_BOOKKEEPING_ENABLED="true";
 process.env.NOTETO_F17_INVOICING_ENABLED="true";
+process.env.NOTETO_F17_TAX_INTAKE_WRITE_ENABLED="true";
 const db=mysql.createPool({
   host:"127.0.0.1",port:3307,user:"noteto_services",
   password:"ci_dummy_unused_password",database:"noteto_dev",timezone:"Z",
@@ -42,8 +44,8 @@ before(async()=>{
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
   assert.equal(Number((await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
-  ))[0]?.n),22);
-  for(const key of ["taxes.read","transactions.create","invoices.create"]){
+  ))[0]?.n),23);
+  for(const key of ["taxes.read","taxes.manage","transactions.create","invoices.create"]){
     await db.execute(
       "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
       [uid(),key,"F17.4 private tax preparation"]
@@ -382,6 +384,159 @@ test("tax source coverage rejects unauthorized user, holds, production mode",asy
       businessId:held.businessId,userId:held.userId,assessmentYearStart:2026,
     },async()=>{throw Error("DB_CALLED");}),code("TAX_READINESS_DISABLED"));
   }finally{process.env.NODE_ENV="development";}
+});
+const intakeClaims:TaxIntakeClaims={
+  taxpayerCategoryClaim:"NOT_SURE",residencyClaim:"UNKNOWN",
+  otherIncomeClaim:"YES",capitalAssetsClaim:"YES",
+  nonDeductibleCostsClaim:"NOT_SURE",withholdingCreditsClaim:"UNKNOWN",
+  ownerIsTaxpayerClaim:"NOT_SURE",
+};
+const taxInput=(f:Fixture,expectedRevision:number|null=null)=>({
+  businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  expectedRevision,claims:intakeClaims,
+});
+test("intake is absent by default, without personal tax IDs, and never computes tax due",async()=>{
+  const f=await fixture();
+  const intake=await readTaxIntakeDraft({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  });
+  assert.equal(intake.status,"NOT_STARTED");
+  assert.equal(intake.revision,null);
+  assert.equal(intake.taxPayableLkr,null);
+  assert.equal(intake.taxableIncomeLkr,null);
+  assert.equal(intake.legalOrTaxProfessionalVerified,false);
+});
+test("authorized preparation draft creates one audited revision and remains UNVERIFIED",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]});
+  const draft=await saveTaxIntakeDraft(taxInput(f));
+  assert.equal(draft.status,"UNVERIFIED_DRAFT");
+  assert.equal(draft.revision,1);
+  assert.equal(draft.taxPayableLkr,null);
+  assert.equal(draft.legalOrTaxProfessionalVerified,false);
+  assert.equal(draft.claims?.capitalAssetsClaim,"YES");
+  const read=await readTaxIntakeDraft({
+    businessId:f.businessId,userId:f.userId,assessmentYearStart:2026,
+  });
+  assert.deepEqual(read.claims,intakeClaims);
+  const counts=await rows(
+    "SELECT COUNT(*) AS n FROM taxpayer_intake_draft_audits WHERE business_id=?",
+    [f.businessId]
+  );
+  assert.equal(Number(counts[0]?.n),1);
+});
+test("updating a draft increments optimistic revision and preserves before/after audit",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]});
+  const first=await saveTaxIntakeDraft(taxInput(f));
+  assert.equal(first.revision,1);
+  const modified={
+    ...taxInput(f,1),claims:{...intakeClaims,residencyClaim:"RESIDENT" as const},
+  };
+  const next=await saveTaxIntakeDraft(modified);
+  assert.equal(next.revision,2);
+  assert.equal(next.claims?.residencyClaim,"RESIDENT");
+  await assert.rejects(()=>saveTaxIntakeDraft(taxInput(f,1)),(e:unknown)=>{
+    assert.ok(e instanceof TaxIntakeError);
+    assert.equal(e.code,"TAX_INTAKE_REVISION_CONFLICT");return true;
+  });
+  const audit=await rows(
+    "SELECT COUNT(*) AS n FROM taxpayer_intake_draft_audits WHERE business_id=?",
+    [f.businessId]
+  );
+  assert.equal(Number(audit[0]?.n),2);
+  const [revisions]=await db.execute<RowDataPacket[]>(
+    "SELECT previous_claims_json,updated_claims_json FROM taxpayer_intake_draft_audits WHERE business_id=? AND revision=2",
+    [f.businessId]
+  );
+  const before=typeof revisions[0]?.previous_claims_json==="string"
+    ?JSON.parse(revisions[0].previous_claims_json):revisions[0]?.previous_claims_json;
+  const after=typeof revisions[0]?.updated_claims_json==="string"
+    ?JSON.parse(revisions[0].updated_claims_json):revisions[0]?.updated_claims_json;
+  assert.equal(before.residencyClaim,"UNKNOWN");
+  assert.equal(after.residencyClaim,"RESIDENT");
+});
+test("two concurrent first-draft saves create exactly one audited draft",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]});
+  const outcomes=await Promise.allSettled([
+    saveTaxIntakeDraft(taxInput(f)),saveTaxIntakeDraft(taxInput(f)),
+  ]);
+  assert.equal(outcomes.filter(x=>x.status==="fulfilled").length,1);
+  assert.equal(outcomes.filter(x=>x.status==="rejected").length,1);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM taxpayer_intake_drafts WHERE business_id=?",
+    [f.businessId]
+  ))[0]?.n),1);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM taxpayer_intake_draft_audits WHERE business_id=?",
+    [f.businessId]
+  ))[0]?.n),1);
+});
+test("cross tenant and missing taxes.manage both deny draft writes",async()=>{
+  const a=await fixture({permissions:["taxes.read","taxes.manage"]});
+  const b=await fixture();
+  await assert.rejects(()=>saveTaxIntakeDraft({
+    ...taxInput(a),userId:b.userId,
+  }),(e:unknown)=>{
+    assert.ok(e instanceof TaxReadinessError);
+    assert.equal(e.code,"TAX_PERMISSION_DENIED");return true;
+  });
+  await assert.rejects(()=>saveTaxIntakeDraft(taxInput(b)),(e:unknown)=>{
+    assert.ok(e instanceof TaxIntakeError);
+    assert.equal(e.code,"TAX_INTAKE_MANAGE_PERMISSION_DENIED");return true;
+  });
+});
+test("held account cannot read or write tax questionnaire",async()=>{
+  const held=await fixture({status:"PAST_DUE",
+    permissions:["taxes.read","taxes.manage"]});
+  await assert.rejects(()=>saveTaxIntakeDraft(taxInput(held)),(e:unknown)=>{
+    assert.ok(e instanceof TaxReadinessError);
+    assert.equal(e.code,"TAX_SUBSCRIPTION_NOT_ELIGIBLE");return true;
+  });
+  await assert.rejects(()=>readTaxIntakeDraft({
+    businessId:held.businessId,userId:held.userId,assessmentYearStart:2026,
+  }),(e:unknown)=>{
+    assert.ok(e instanceof TaxReadinessError);
+    assert.equal(e.code,"TAX_SUBSCRIPTION_NOT_ELIGIBLE");return true;
+  });
+});
+test("unverified claim validation rejects extra PII and unrecognized status before DB",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]});
+  for(const input of [
+    {...taxInput(f),claims:{...intakeClaims,tin:"012345678"}},
+    {...taxInput(f),claims:{...intakeClaims,residencyClaim:"VERIFIED"}},
+    {...taxInput(f),expectedRevision:-1},
+  ]){
+    await assert.rejects(()=>saveTaxIntakeDraft(input as typeof input & {
+      claims:TaxIntakeClaims,
+    },async()=>{throw Error("DB_CALLED");}),(e:unknown)=>{
+      assert.ok(e instanceof TaxIntakeError);
+      assert.ok(["INVALID_TAX_INTAKE_CLAIMS","INVALID_TAX_INTAKE_REVISION"].includes(e.code));
+      return true;
+    });
+  }
+});
+test("tax intake write disabled in production and without opt-in, prior to DB access",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]});
+  const input=taxInput(f);
+  try{
+    process.env.NODE_ENV="production";
+    await assert.rejects(()=>saveTaxIntakeDraft(input,async()=>{
+      throw Error("DB_CALLED");
+    }),(e:unknown)=>{
+      assert.ok(e instanceof TaxIntakeError);
+      assert.equal(e.code,"TAX_INTAKE_WRITE_DISABLED");return true;
+    });
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_TAX_INTAKE_WRITE_ENABLED="false";
+    await assert.rejects(()=>saveTaxIntakeDraft(input,async()=>{
+      throw Error("DB_CALLED");
+    }),(e:unknown)=>{
+      assert.ok(e instanceof TaxIntakeError);
+      assert.equal(e.code,"TAX_INTAKE_WRITE_DISABLED");return true;
+    });
+  }finally{
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_TAX_INTAKE_WRITE_ENABLED="true";
+  }
 });
 test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",async()=>{
   const f=await fixture(),other=await fixture(),nonce=uid();
