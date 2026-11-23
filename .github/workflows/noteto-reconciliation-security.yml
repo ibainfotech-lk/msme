@@ -192,6 +192,9 @@ jobs:
       - name: Verify F17.2 monthly invoice quota, idempotency and no phantom cash posting
         run: npm run test:mysql-invoice-issuance
 
+      - name: Verify F17.3 cash-basis day week year reports, permissions and no unpaid invoice income
+        run: npm run test:mysql-cashbook-reports
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
