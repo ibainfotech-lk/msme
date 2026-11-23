@@ -173,7 +173,18 @@ test("OTP-backed registration creates pending account and checkout atomically", 
   assert.equal(business[0].status, "PENDING");
   assert.equal(business[0].current_subscription_id, null);
   assert.equal(Number(owner[0]?.n), 1);
-  assert.equal(Number(granted[0]?.n), 12);
+  assert.equal(Number(granted[0]?.n), permissions.length);
+  // Registration must NOT silently grant new module-specific privileges.
+  const taxAccess = await query(
+    [
+      "SELECT COUNT(*) AS n FROM role_permissions rp",
+      "JOIN roles r ON r.id = rp.role_id",
+      "JOIN permissions p ON p.id = rp.permission_id",
+      "WHERE r.business_id = ? AND r.name = 'OWNER' AND p.`key` = 'taxes.manage'",
+    ].join(" "),
+    [created.businessId]
+  );
+  assert.equal(Number(taxAccess[0]?.n), 0);
   assert.equal(checkout[0].status, "PENDING");
   assert.equal(checkout[0].amount_lkr, "499.00");
   const consent = await query(
