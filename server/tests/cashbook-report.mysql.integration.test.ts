@@ -9,6 +9,8 @@ import session from "express-session";
 import mysql,{type RowDataPacket} from "mysql2/promise";
 import runtimePool from "../src/config/database";
 import reportRoutes from "../src/modules/reports/report.routes";
+import { saveImmutableCashReport, ReportSnapshotError } from "../src/modules/reports/immutable-report-snapshot.service";
+import { loadPreviouslyGeneratedPdf, ArchivedReportError } from "../src/modules/reports/archived-report-download.service";
 import {
   previewCashbookReport,CashbookReportError,
   type CashbookReportPeriod,
@@ -28,6 +30,8 @@ if(!guard) throw Error("STOP: F17.3 requires disposable GitHub MySQL 8.4");
 process.env.NOTETO_F17_REPORT_PREVIEW_ENABLED="true";
 process.env.NOTETO_F17_BOOKKEEPING_ENABLED="true";
 process.env.NOTETO_F17_INVOICING_ENABLED="true";
+process.env.NOTETO_F17_PDF_ARCHIVE_WRITE_ENABLED="true";
+process.env.NOTETO_ARCHIVED_REPORT_DOWNLOAD_ENABLED="true";
 const db=mysql.createPool({
   host:"127.0.0.1",port:3307,database:"noteto_dev",user:"noteto_services",
   password:"ci_dummy_unused_password",timezone:"Z",decimalNumbers:false,connectionLimit:8,
@@ -43,7 +47,7 @@ before(async()=>{
     "ONLY_THE_EPHEMERAL_MYSQL84_SERVICE");
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
   assert.equal(Number((await rows("SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"))[0]?.n),21);
-  for(const key of ["reports.generate","transactions.create","transactions.update","invoices.create"]){
+  for(const key of ["reports.generate","reports.read","transactions.create","transactions.update","invoices.create"]){
     await db.execute(
       "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
       [uid(),key,"F17.3 disposable reports"]
@@ -74,7 +78,7 @@ async function fixture(options:{
       [roleId,businessId]
     );
     for(const key of options.permissions??[
-      "reports.generate","transactions.create","transactions.update","invoices.create"
+      "reports.generate","reports.read","transactions.create","transactions.update","invoices.create"
     ]){
       await con.execute(
         "INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE `key`=?",
@@ -289,6 +293,146 @@ test("production and disabled preview fail closed before database access",async(
   }finally{
     process.env.NODE_ENV="development";
     process.env.NOTETO_F17_REPORT_PREVIEW_ENABLED="true";
+  }
+});
+test("saving a cash report writes one checksum-verified immutable PDF, not another cash transaction",async()=>{
+  const f=await fixture();
+  await cash(f,"INCOME","1050.00","2026-11-20");
+  await cash(f,"EXPENSE","50.50","2026-11-20","Supplies");
+  const snapshotId=uid();
+  const saved=await saveImmutableCashReport({
+    businessId:f.businessId,userId:f.userId,
+    snapshotId,period:"DAILY",periodKey:"2026-11-20",
+  });
+  assert.equal(saved.replayed,false);
+  assert.equal(saved.cashTransactionsWritten,false);
+  assert.equal(saved.contentSha256.length,64);
+  const downloaded=await loadPreviouslyGeneratedPdf({
+    businessId:f.businessId,userId:f.userId,reportId:snapshotId,
+  });
+  assert.equal(downloaded.checksumSha256,saved.contentSha256);
+  assert.ok(downloaded.bytes.subarray(0,8).equals(Buffer.from("%PDF-1.4")));
+  assert.equal(downloaded.bytes.length,saved.contentLength);
+  assert.ok(downloaded.bytes.toString("ascii").includes("999.50"));
+  const pdftext=downloaded.bytes.toString("ascii");
+  assert.match(pdftext,/startxref\n\d+\n%%EOF/);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM cash_transactions WHERE business_id=?",[f.businessId]
+  ))[0]?.n),2);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM archived_report_snapshots WHERE business_id=?",[f.businessId]
+  ))[0]?.n),1);
+});
+test("same snapshot UUID replays unchanged bytes even after a later cashbook correction",async()=>{
+  const f=await fixture();
+  const entry=await cash(f,"INCOME","800.00","2026-11-20");
+  const snapshotId=uid(),input={
+    businessId:f.businessId,userId:f.userId,snapshotId,
+    period:"DAILY" as const,periodKey:"2026-11-20",
+  };
+  const one=await saveImmutableCashReport(input);
+  await updateActiveCashEntry({
+    businessId:f.businessId,userId:f.userId,transactionId:entry,
+    expectedVersion:1,amountLkr:"700.00",category:"Adjusted",
+    description:"Corrected cash",occurredOn:"2026-11-20",
+    reason:"Manual recount before new live report",
+  });
+  const replay=await saveImmutableCashReport(input);
+  assert.equal(replay.replayed,true);
+  assert.equal(replay.contentSha256,one.contentSha256);
+  assert.equal(Number((await rows(
+    "SELECT COUNT(*) AS n FROM archived_report_snapshots WHERE business_id=?",[f.businessId]
+  ))[0]?.n),1);
+  const newLive=await report(f,"DAILY","2026-11-20");
+  assert.equal(newLive.totals.cashInLkr,"700.00");
+  assert.ok((await loadPreviouslyGeneratedPdf({
+    businessId:f.businessId,userId:f.userId,reportId:snapshotId,
+  })).bytes.toString("ascii").includes("800.00"));
+});
+test("held account may retrieve a pre-hold PDF but cannot generate a new one",async()=>{
+  const f=await fixture();
+  await cash(f,"INCOME","66.00","2026-11-20");
+  const snapshotId=uid();
+  await saveImmutableCashReport({
+    businessId:f.businessId,userId:f.userId,snapshotId,
+    period:"DAILY",periodKey:"2026-11-20",
+  });
+  await db.execute(
+    "UPDATE business_subscriptions SET status='PAST_DUE',held_at=UTC_TIMESTAMP(3) WHERE id=?",
+    [f.subscriptionId]
+  );
+  assert.equal((await loadPreviouslyGeneratedPdf({
+    businessId:f.businessId,userId:f.userId,reportId:snapshotId,
+  })).contentType,"application/pdf");
+  await assert.rejects(()=>saveImmutableCashReport({
+    businessId:f.businessId,userId:f.userId,snapshotId:uid(),
+    period:"DAILY",periodKey:"2026-11-20",
+  }),e=>{
+    assert.ok(e instanceof CashbookReportError);
+    assert.equal(e.code,"REPORT_SUBSCRIPTION_NOT_ELIGIBLE");
+    return true;
+  });
+});
+test("snapshot IDs cannot be replayed across tenants or changed to another period",async()=>{
+  const a=await fixture(),b=await fixture(),snapshotId=uid();
+  await saveImmutableCashReport({
+    businessId:a.businessId,userId:a.userId,snapshotId,
+    period:"DAILY",periodKey:"2026-11-20",
+  });
+  const error=(e:unknown)=>{
+    assert.ok(e instanceof ReportSnapshotError);
+    assert.equal(e.code,"REPORT_SNAPSHOT_KEY_CONFLICT");return true;
+  };
+  await assert.rejects(()=>saveImmutableCashReport({
+    businessId:a.businessId,userId:a.userId,snapshotId,
+    period:"DAILY",periodKey:"2026-11-19",
+  }),error);
+  await assert.rejects(()=>saveImmutableCashReport({
+    businessId:b.businessId,userId:b.userId,snapshotId,
+    period:"DAILY",periodKey:"2026-11-20",
+  }),error);
+  await assert.rejects(()=>loadPreviouslyGeneratedPdf({
+    businessId:b.businessId,userId:b.userId,reportId:snapshotId,
+  }),(e:unknown)=>{
+    assert.ok(e instanceof ArchivedReportError);
+    assert.equal(e.code,"ARCHIVED_REPORT_NOT_FOUND");return true;
+  });
+});
+test("write requires both reports.generate and reports.read permissions",async()=>{
+  const f=await fixture({permissions:["reports.generate"]});
+  await assert.rejects(()=>saveImmutableCashReport({
+    businessId:f.businessId,userId:f.userId,snapshotId:uid(),
+    period:"DAILY",periodKey:"2026-11-20",
+  }),(e:unknown)=>{
+    assert.ok(e instanceof ReportSnapshotError);
+    assert.equal(e.code,"REPORT_ARCHIVE_READ_PERMISSION_REQUIRED");return true;
+  });
+});
+test("snapshot writer is disabled in production and without its feature flag",async()=>{
+  const f=await fixture();
+  const input={
+    businessId:f.businessId,userId:f.userId,snapshotId:uid(),
+    period:"DAILY" as const,periodKey:"2026-11-20",
+  };
+  try{
+    process.env.NODE_ENV="production";
+    await assert.rejects(()=>saveImmutableCashReport(input,async()=>{
+      throw Error("UNEXPECTED_DB");
+    }),(e:unknown)=>{
+      assert.ok(e instanceof ReportSnapshotError);
+      assert.equal(e.code,"REPORT_ARCHIVE_WRITE_DISABLED");return true;
+    });
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_PDF_ARCHIVE_WRITE_ENABLED="false";
+    await assert.rejects(()=>saveImmutableCashReport(input,async()=>{
+      throw Error("UNEXPECTED_DB");
+    }),(e:unknown)=>{
+      assert.ok(e instanceof ReportSnapshotError);
+      assert.equal(e.code,"REPORT_ARCHIVE_WRITE_DISABLED");return true;
+    });
+  }finally{
+    process.env.NODE_ENV="development";
+    process.env.NOTETO_F17_PDF_ARCHIVE_WRITE_ENABLED="true";
   }
 });
 test("HTTP preview requires a session, strict queries, tenant rights and no writes",async()=>{
