@@ -538,8 +538,8 @@ test("tax intake write disabled in production and without opt-in, prior to DB ac
     process.env.NOTETO_F17_TAX_INTAKE_WRITE_ENABLED="true";
   }
 });
-test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",async()=>{
-  const f=await fixture(),other=await fixture(),nonce=uid();
+test("HTTP endpoint requires auth, strict query, tenant rights and guarded intake PUT",async()=>{
+  const f=await fixture({permissions:["taxes.read","taxes.manage"]}),other=await fixture(),nonce=uid();
   const app=express();
   app.use(express.json({limit:"20kb"}));
   app.use(session({
@@ -591,6 +591,43 @@ test("HTTP endpoint requires auth, strict query, tenant rights and GET-only",asy
       headers:{Cookie:cookie},
     })).status,400);
     assert.equal((await fetch(sourcesUrl,{method:"POST",headers:{Cookie:cookie}})).status,405);
+    const intakeUrl=base+"/api/taxes/businesses/"+f.businessId+
+      "/intake?assessmentYearStart=2026";
+    assert.equal((await fetch(intakeUrl)).status,401);
+    const intakeRead=await fetch(intakeUrl,{headers:{Cookie:cookie}});
+    assert.equal(intakeRead.status,200);
+    const readBody=await intakeRead.json() as {intake:{status:string;taxPayableLkr:null}};
+    assert.equal(readBody.intake.status,"NOT_STARTED");
+    assert.equal(readBody.intake.taxPayableLkr,null);
+    const intakeSaveUrl=intakeUrl.split("?")[0];
+    const payload={assessmentYearStart:2026,expectedRevision:null,claims:intakeClaims};
+    assert.equal((await fetch(intakeSaveUrl,{
+      method:"PUT",headers:{Cookie:cookie,"Content-Type":"application/json"},
+      body:JSON.stringify(payload),
+    })).status,403);
+    assert.equal((await fetch(intakeSaveUrl,{
+      method:"PUT",headers:{Cookie:cookie,Origin:"http://localhost:5173",
+        "Content-Type":"application/json"},
+      body:JSON.stringify({...payload,tin:"unacceptable"}),
+    })).status,400);
+    const saved=await fetch(intakeSaveUrl,{
+      method:"PUT",headers:{Cookie:cookie,Origin:"http://localhost:5173",
+        "Content-Type":"application/json"},
+      body:JSON.stringify(payload),
+    });
+    assert.equal(saved.status,200);
+    const savedBody=await saved.json() as {intake:{revision:number;status:string}};
+    assert.equal(savedBody.intake.revision,1);
+    assert.equal(savedBody.intake.status,"UNVERIFIED_DRAFT");
+    assert.equal((await fetch(intakeSaveUrl,{
+      method:"PUT",headers:{Cookie:cookie,Origin:"http://localhost:5173",
+        "Content-Type":"application/json"},
+      body:JSON.stringify(payload),
+    })).status,409);
+    assert.equal((await fetch(intakeRead.url.replace(f.businessId,other.businessId),{
+      headers:{Cookie:cookie},
+    })).status,403);
+    assert.equal((await fetch(intakeSaveUrl,{method:"POST",headers:{Cookie:cookie}})).status,405);
     assert.equal((await fetch(url,{method:"POST",headers:{Cookie:cookie}})).status,405);
     try{
       process.env.NODE_ENV="production";
