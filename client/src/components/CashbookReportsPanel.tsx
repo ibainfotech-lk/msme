@@ -30,7 +30,9 @@ const labels={
     cashIn:"Cash in",cashOut:"Cash out",net:"Net cash movement",
     period:"Period",incomeEntries:"Income entries",expenseEntries:"Expense entries",
     breakdown:"Period breakdown",category:"By category",noEntries:"No entries for this period.",
-    export:"Download CSV",caveat:"These totals represent recorded cash movements only. They are not bank-reconciled balances, taxable profit or unpaid invoice revenue.",
+    export:"Download CSV",savePdf:"Save and download PDF",savingPdf:"Saving PDF...",
+    pdfInfo:"PDF summary is in English only; category detail remains in the multilingual CSV.",
+    caveat:"These totals represent recorded cash movements only. They are not bank-reconciled balances, taxable profit or unpaid invoice revenue.",
     exports:"CSV is a live export, not an immutable saved PDF. Existing archived PDFs remain unchanged.",
   },
   ta:{
@@ -40,7 +42,9 @@ const labels={
     cashIn:"வரவு",cashOut:"செலவு",net:"நிகர பண மாற்றம்",
     period:"காலம்",incomeEntries:"வரவு பதிவுகள்",expenseEntries:"செலவு பதிவுகள்",
     breakdown:"காலச் சுருக்கம்",category:"வகை வாரியாக",noEntries:"இந்தக் காலத்தில் பதிவுகள் இல்லை.",
-    export:"CSV பதிவிறக்கு",caveat:"இவை பதிவு செய்யப்பட்ட பண இயக்கங்கள் மட்டுமே. வங்கி உறுதிசெய்யப்பட்ட இருப்பு, வரிக்குரிய இலாபம் அல்லது செலுத்தாத விலைப்பட்டியல் வருமானம் அல்ல.",
+    export:"CSV பதிவிறக்கு",savePdf:"PDF சேமித்து பதிவிறக்கு",savingPdf:"PDF சேமிக்கப்படுகிறது...",
+    pdfInfo:"PDF சுருக்கம் ஆங்கிலத்தில் உள்ளது; வகை விபரங்கள் CSV கோப்பில் உள்ளன.",
+    caveat:"இவை பதிவு செய்யப்பட்ட பண இயக்கங்கள் மட்டுமே. வங்கி உறுதிசெய்யப்பட்ட இருப்பு, வரிக்குரிய இலாபம் அல்லது செலுத்தாத விலைப்பட்டியல் வருமானம் அல்ல.",
     exports:"CSV என்பது தற்போதைய தரவின் ஏற்றுமதி; மாற்றமில்லாத பழைய PDF அறிக்கை அல்ல.",
   },
   si:{
@@ -50,7 +54,9 @@ const labels={
     cashIn:"ලැබුණු මුදල්",cashOut:"ගෙවූ මුදල්",net:"ශුද්ධ මුදල් වෙනස",
     period:"කාලය",incomeEntries:"ආදායම් සටහන්",expenseEntries:"වියදම් සටහන්",
     breakdown:"කාල පරිච්ඡේදය",category:"වර්ග අනුව",noEntries:"මෙම කාලයේ සටහන් නැත.",
-    export:"CSV බාගන්න",caveat:"මෙම අගයන් සටහන් කළ මුදල් චලනයන් පමණි. බැංකු ගැලපූ ශේෂය, බදු ලාභය හෝ නොගෙවූ ඉන්වොයිසි ආදායම නොවේ.",
+    export:"CSV බාගන්න",savePdf:"PDF සුරකින්න සහ බාගන්න",savingPdf:"PDF සුරකිමින්...",
+    pdfInfo:"PDF සාරාංශය ඉංග්‍රීසි භාෂාවෙන් පමණි; වර්ග විස්තර CSV ගොනුවේ ඇත.",
+    caveat:"මෙම අගයන් සටහන් කළ මුදල් චලනයන් පමණි. බැංකු ගැලපූ ශේෂය, බදු ලාභය හෝ නොගෙවූ ඉන්වොයිසි ආදායම නොවේ.",
     exports:"CSV යනු සජීවී දත්ත අපනයනයකි; සුරැකි PDF වාර්තාවක් නොවේ.",
   },
 } satisfies Record<Language,Record<string,string>>;
@@ -120,6 +126,8 @@ export default function CashbookReportsPanel({businessId,language}:Props){
   const [result,setResult]=useState<Report|null>(null);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
+  const [savingPdf,setSavingPdf]=useState(false);
+  const [snapshotKey,setSnapshotKey]=useState(()=>crypto.randomUUID());
   const run=async(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault();
     if(busy)return;
@@ -143,6 +151,46 @@ export default function CashbookReportsPanel({businessId,language}:Props){
       setResult(body.report);
     }catch(e){setError(e instanceof Error?e.message:"REPORT_NOT_AVAILABLE");}
     finally{setBusy(false);}
+  };
+  const savePdf=async()=>{
+    if(!result||savingPdf||busy)return;
+    setSavingPdf(true);setError("");
+    const snapshotId=snapshotKey;
+    const endpoint="/api/reports/businesses/"+encodeURIComponent(businessId);
+    try{
+      const response=await fetch(endpoint+"/snapshots",{
+        method:"POST",credentials:"include",cache:"no-store",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          snapshotId,period:result.reportType,periodKey:result.periodKey,
+        }),
+      });
+      const data=await response.json() as {
+        success?:boolean;code?:string;snapshot?:{id:string};
+      };
+      if(!response.ok||!data.success||data.snapshot?.id!==snapshotId){
+        throw new Error(data.code??"REPORT_PDF_SAVE_FAILED");
+      }
+      const download=await fetch(endpoint+"/snapshots/"+snapshotId+"/pdf",{
+        credentials:"include",cache:"no-store",
+      });
+      if(!download.ok || !download.headers.get("Content-Type")?.includes("application/pdf")){
+        const body=await download.json().catch(()=>null) as {code?:string}|null;
+        throw new Error(body?.code??"REPORT_PDF_DOWNLOAD_FAILED");
+      }
+      const bytes=await download.blob();
+      const objectUrl=URL.createObjectURL(bytes);
+      const anchor=document.createElement("a");
+      anchor.href=objectUrl;
+      anchor.download="noteto-"+result.reportType.toLowerCase()+
+        "-"+result.periodKey+"-saved.pdf";
+      document.body.append(anchor);anchor.click();anchor.remove();
+      // Preserve the snapshot key until both save and download have succeeded.
+      setSnapshotKey(crypto.randomUUID());
+      setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
+    }catch(e){
+      setError(e instanceof Error?e.message:"REPORT_PDF_SAVE_FAILED");
+    }finally{setSavingPdf(false);}
   };
   const breakdown=result?[...result.dailyBreakdown,...result.monthlyBreakdown]:[];
   return <section className="noteto-cash-reports" aria-label={t.heading}>
@@ -202,8 +250,15 @@ export default function CashbookReportsPanel({businessId,language}:Props){
             <td>{c.entries}</td>
           </tr>)}</tbody>
         </table></div>}
-      <button type="button" className="secondary-button"
-        onClick={()=>saveCsv(result)}>{t.export}</button>
+      <div className="report-download-actions">
+        <button type="button" className="secondary-button"
+          onClick={()=>saveCsv(result)}>{t.export}</button>
+        <button type="button" className="secondary-button"
+          disabled={savingPdf||busy} onClick={()=>void savePdf()}>
+          {savingPdf?t.savingPdf:t.savePdf}
+        </button>
+      </div>
+      <p className="report-footnote">{t.pdfInfo}</p>
       <p className="report-footnote">{t.exports}</p>
     </>}
   </section>;
