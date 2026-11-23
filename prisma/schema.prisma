@@ -515,6 +515,7 @@ model User {
   issuedSalesInvoices SalesInvoice[]
   businessProfileEdits BusinessProfileEditAudit[]
   holdReviewJournalEntries SubscriptionHoldReviewJournal[]
+  reviewedTaxRuleSources TaxRuleSourceReview[]
 
   @@map("users")
 }
@@ -995,4 +996,47 @@ model PaymentReconciliationEvidence {
   @@index([authenticationStatus, receivedAt], map: "idx_recon_auth_received")
   @@index([webhookEventId], map: "idx_recon_webhook")
   @@map("payment_reconciliation_evidence")
+}
+
+
+/**
+ * F.17.4b: reviewed statutory source EVIDENCE, not tax rates or amounts.
+ * No source is approved by default. Approval must be a separate, independently
+ * controlled process; this model deliberately has no customer-write API.
+ */
+enum TaxRuleSourceScope {
+  INDIVIDUAL
+  COMPANY
+  OTHER_ENTITY
+}
+
+enum TaxRuleSourceReviewStatus {
+  DRAFT
+  REVIEWED
+  REVOKED
+}
+
+model TaxRuleSourceReview {
+  id String @id @default(uuid()) @db.Char(36)
+  sourceCode String @map("source_code") @db.VarChar(64)
+  revision Int @db.UnsignedInt
+  taxpayerScope TaxRuleSourceScope @map("taxpayer_scope")
+  assessmentYearStart Int @map("assessment_year_start") @db.UnsignedInt
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo DateTime @map("effective_to") @db.Date
+  sourceTitle String @map("source_title") @db.VarChar(250)
+  sourceUri String @map("source_uri") @db.VarChar(700)
+  sourceSha256 String @map("source_sha256") @db.Char(64)
+  reviewStatus TaxRuleSourceReviewStatus @default(DRAFT) @map("review_status")
+  reviewedByUserId String? @map("reviewed_by_user_id") @db.Char(36)
+  reviewedAt DateTime? @map("reviewed_at") @db.DateTime(3)
+  reviewNote String @default("") @map("review_note") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  reviewer User? @relation(fields: [reviewedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_rule_source_reviewer")
+
+  @@unique([sourceCode, revision], map: "uq_tax_rule_source_code_revision")
+  @@index([taxpayerScope, assessmentYearStart, reviewStatus], map: "idx_tax_rule_source_scope_year_status")
+  @@index([reviewedByUserId], map: "idx_tax_rule_source_reviewed_by")
+  @@map("tax_rule_source_reviews")
 }
