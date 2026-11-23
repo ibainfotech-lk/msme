@@ -202,8 +202,10 @@ test("invoice list and detail are business scoped",async()=>{
   const mine=await listInvoices({businessId:a.businessId,userId:a.userId});
   assert.equal(mine.items.length,1);
   assert.equal(mine.items[0].id,one.id);
-  await assert.rejects(()=>getInvoice({businessId:a.businessId,userId:a.userId,
-    invoiceId:(await listInvoices({businessId:b.businessId,userId:b.userId})).items[0].id
+  const otherInvoices=await listInvoices({businessId:b.businessId,userId:b.userId});
+  const otherInvoiceId=otherInvoices.items[0].id;
+  await assert.rejects(()=>getInvoice({
+    businessId:a.businessId,userId:a.userId,invoiceId:otherInvoiceId,
   }),err("INVOICE_NOT_FOUND"));
   await assert.rejects(()=>listInvoices({businessId:b.businessId,userId:a.userId}),
     err("INVOICE_PERMISSION_DENIED"));
