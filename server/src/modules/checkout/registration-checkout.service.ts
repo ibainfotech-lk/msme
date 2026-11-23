@@ -77,6 +77,18 @@ function duplicateKey(error: unknown): boolean {
 
 const priceFormat = /^(?:0|[1-9][0-9]{0,9})\.[0-9]{2}$/;
 
+/**
+ * Fixed, audited registration-owner permission baseline. Later modules must
+ * not silently expand new owners' privileges through the global permission
+ * catalogue (especially taxes.manage). Additions need explicit review.
+ */
+const registrationOwnerPermissionKeys = [
+  "billing.manage", "business.manage", "business.read",
+  "invoices.manage", "invoices.read", "members.manage", "members.read",
+  "reports.read", "transactions.create", "transactions.delete",
+  "transactions.read", "transactions.update",
+] as const;
+
 export async function createRegistrationCheckout(
   input: RegistrationCheckoutInput,
   getConnection: ConnectionFactory = () => pool.getConnection()
@@ -191,14 +203,18 @@ export async function createRegistrationCheckout(
       [roleId, businessId]
     );
 
+    // Grant only this registration workflow's reviewed baseline permissions.
+    // A new global permission is never implicitly assigned to all owners.
+    const placeholders = registrationOwnerPermissionKeys.map(() => "?").join(",");
     const [permissions] = await connection.execute<ResultSetHeader>(
       [
         "INSERT INTO role_permissions (role_id, permission_id)",
         "SELECT ?, p.id FROM permissions p",
+        "WHERE p.`key` IN (" + placeholders + ")",
       ].join(" "),
-      [roleId]
+      [roleId, ...registrationOwnerPermissionKeys]
     );
-    if (permissions.affectedRows !== 12) {
+    if (permissions.affectedRows !== registrationOwnerPermissionKeys.length) {
       throw new RegistrationCheckoutError(
         503, "OWNER_PERMISSIONS_UNAVAILABLE",
         "Owner permissions have not been initialized."
