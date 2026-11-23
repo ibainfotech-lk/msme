@@ -47,13 +47,14 @@ const keys:(keyof TaxIntakeClaims)[]=[
   "nonDeductibleCostsClaim","withholdingCreditsClaim","ownerIsTaxpayerClaim"
 ];
 type ConnectionFactory=()=>Promise<PoolConnection>;
-interface IntakeRow extends RowDataPacket{
+interface IntakeRecord {
   id:string;revision:number;
   taxpayer_category_claim:Category;residency_claim:Residency;
   other_income_claim:Answer;capital_assets_claim:Answer;
   non_deductible_costs_claim:Answer;withholding_credits_claim:Answer;
   owner_is_taxpayer_claim:Answer;
 }
+interface IntakeRow extends RowDataPacket, IntakeRecord {}
 interface PermissionRow extends RowDataPacket {authorized:number}
 const selection=[
   "SELECT id,revision,taxpayer_category_claim,residency_claim,",
@@ -61,7 +62,7 @@ const selection=[
   "withholding_credits_claim,owner_is_taxpayer_claim",
   "FROM taxpayer_intake_drafts WHERE business_id=? AND assessment_year_start=?",
 ].join(" ");
-function extract(row:IntakeRow):TaxIntakeClaims{
+function extract(row:IntakeRecord):TaxIntakeClaims{
   return {
     taxpayerCategoryClaim:row.taxpayer_category_claim,
     residencyClaim:row.residency_claim,
@@ -84,7 +85,7 @@ function validateClaims(value:unknown):asserts value is TaxIntakeClaims{
     throw new TaxIntakeError("INVALID_TAX_INTAKE_CLAIMS",400);
   }
 }
-function view(year:number,row?:IntakeRow):TaxIntakeDraftResult {
+function view(year:number,row?:IntakeRecord):TaxIntakeDraftResult {
   return {
     status:row?"UNVERIFIED_DRAFT":"NOT_STARTED",
     assessmentYear:year+"/"+(year+1),
