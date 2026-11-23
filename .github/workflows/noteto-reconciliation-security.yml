@@ -195,7 +195,7 @@ jobs:
       - name: Verify F17.3 cash-basis day week year reports, permissions and no unpaid invoice income
         run: npm run test:mysql-cashbook-reports
 
-      - name: Verify F17.4 tax readiness, April-March years, RBAC and no unreviewed tax figures
+      - name: Verify F17.4 tax readiness and effective-dated reviewed-source evidence without tax payable
         run: npm run test:mysql-tax-readiness
 
   client-build:
