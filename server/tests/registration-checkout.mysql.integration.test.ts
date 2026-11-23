@@ -87,8 +87,14 @@ before(async () => {
       [randomUUID(), key, "CI disposable permission"]
     );
   }
-  const count = await query("SELECT COUNT(*) AS n FROM permissions");
-  assert.equal(Number(count[0]?.n), 12);
+  // Check registration's required permissions, not the platform-wide total.
+  // Other modules (e.g. F.17.4c taxes.manage) may add independent permissions.
+  const placeholders = permissions.map(() => "?").join(",");
+  const count = await query(
+    "SELECT COUNT(DISTINCT `key`) AS n FROM permissions WHERE `key` IN (" + placeholders + ")",
+    permissions
+  );
+  assert.equal(Number(count[0]?.n), permissions.length);
 });
 
 function phone(): string {
