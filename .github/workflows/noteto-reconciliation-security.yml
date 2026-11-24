@@ -72,6 +72,9 @@ jobs:
       - name: Verify F17.4d tax review checklist never treats declarations as verified
         run: node --import tsx --test server/tests/taxpayer-review-checklist.policy.test.ts
 
+      - name: Verify F17.4f independent reviewer policy is fail-closed and non-authorizing
+        run: node --import tsx --test server/tests/professional-review-authorization.policy.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
