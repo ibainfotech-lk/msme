@@ -95,7 +95,7 @@ export interface ReviewPolicyFacts {
 
 const sha256 = /^[0-9a-f]{64}$/i;
 function isUserId(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 function epoch(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
