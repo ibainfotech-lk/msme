@@ -75,6 +75,9 @@ jobs:
       - name: Verify F17.4f independent reviewer policy is fail-closed and non-authorizing
         run: node --import tsx --test server/tests/professional-review-authorization.policy.test.ts
 
+      - name: Verify F17.4g review evidence binding and invalidation policy
+        run: node --import tsx --test server/tests/review-evidence-invalidation.policy.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
