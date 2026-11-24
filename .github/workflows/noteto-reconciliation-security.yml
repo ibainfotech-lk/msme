@@ -90,6 +90,9 @@ jobs:
       - name: Verify F17.5f e-SMS offline delivery status and safe reconciliation
         run: node --import tsx --test server/tests/esms-offline-status.adapter.test.ts
 
+      - name: Verify F17.5g staging-only injected e-SMS transport and delivery lookup
+        run: node --import tsx --test server/tests/esms-sandbox-transport.test.ts server/tests/esms-sandbox-status.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
