@@ -78,6 +78,9 @@ jobs:
       - name: Verify F17.4g review evidence binding and invalidation policy
         run: node --import tsx --test server/tests/review-evidence-invalidation.policy.test.ts
 
+      - name: Verify F17.5c proposed environment boundaries are fail-closed and non-authorizing
+        run: node --import tsx --test server/tests/proposed-environment-boundary.policy.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
