@@ -84,6 +84,9 @@ jobs:
       - name: Verify F17.5d OTP contract guards and acknowledgements never authenticate users
         run: node --import tsx --test server/tests/otp-delivery-contract.policy.test.ts
 
+      - name: Verify F17.5f e-SMS offline payload and response contract
+        run: node --import tsx --test server/tests/esms-offline-contract.adapter.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
