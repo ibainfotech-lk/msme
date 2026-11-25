@@ -190,6 +190,54 @@ test("two concurrent requests with the same key permit at most one invocation",a
   );
   assert.equal(Number(rows[0]?.n),1);
 });
+test("a replayed but still RESERVED challenge cannot be sent by orchestration",async()=>{
+  const f=await fixture();
+  const {reserveOtpDispatch}=await import(
+    "../src/services/otp-dispatch-journal.service"
+  );
+  const prior=await reserveOtpDispatch(f);
+  let calls=0;
+  const port:SyntheticOtpSendPort={async send(){
+    calls++;
+    return accepted("uid_"+randomBytes(12).toString("hex"));
+  }};
+  const replay=await simulateOtpDispatchOnce(f,port);
+  assert.equal(replay.outcome,"REPLAY_NO_SEND");
+  assert.equal(replay.dispatchId,prior.dispatchId);
+  assert.equal(calls,0);
+  const state=await query(
+    "SELECT status,attempt_count FROM otp_dispatch_records WHERE id=?",
+    [prior.dispatchId]
+  );
+  assert.equal(state[0]?.status,"RESERVED");
+  assert.equal(state[0]?.attempt_count,0);
+  neverAuthorized(replay);
+});
+test("duplicate provider UID stays uncertain without generating another send",async()=>{
+  const sameUid="uid_"+randomBytes(12).toString("hex");
+  const first=await fixture();
+  const second=await fixture();
+  let calls=0;
+  const port:SyntheticOtpSendPort={async send(){
+    calls++;return accepted(sameUid);
+  }};
+  const a=await simulateOtpDispatchOnce(first,port);
+  assert.equal(a.outcome,"PROVIDER_ACCEPTED_NOT_DELIVERED");
+  const b=await simulateOtpDispatchOnce(second,port);
+  assert.equal(b.outcome,"RECONCILIATION_REQUIRED");
+  assert.equal(b.providerUid,null);
+  assert.equal(calls,2); // one per distinct challenge, never an automatic retry
+  neverAuthorized(b);
+  const state=await query(
+    "SELECT status,attempt_count FROM otp_dispatch_records WHERE id=?",
+    [b.dispatchId]
+  );
+  assert.equal(state[0]?.status,"DISPATCH_UNKNOWN");
+  assert.equal(state[0]?.attempt_count,1);
+  const replay=await simulateOtpDispatchOnce(second,port);
+  assert.equal(replay.outcome,"REPLAY_NO_SEND");
+  assert.equal(calls,2);
+});
 test("disabled CI boundary refuses without calling even a fake transport",async()=>{
   const f=await fixture();
   let calls=0;
