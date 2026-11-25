@@ -93,6 +93,9 @@ jobs:
       - name: Verify F17.5g staging-only injected e-SMS transport and delivery lookup
         run: node --import tsx --test server/tests/esms-sandbox-transport.test.ts server/tests/esms-sandbox-status.test.ts
 
+      - name: Verify F17.5h bounded staging HTTP executor using fake responses only
+        run: node --import tsx --test server/tests/esms-staging-http-executor.test.ts server/tests/esms-staging-http-security.test.ts
+
   mysql-activation-integration:
     name: Disposable MySQL 8.4 settlement integration
     runs-on: ubuntu-24.04
