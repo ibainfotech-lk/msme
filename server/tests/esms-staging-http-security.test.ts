@@ -119,3 +119,22 @@ test("transport exceptions are sanitized before reaching caller",async()=>{
     return true;
   });
 });
+
+test("unresponsive fake transport reaches five-second deadline and aborts",async()=>{
+  let attempts=0;
+  let aborted=false;
+  const hung:EsmsInjectedFetch=async (_url,init)=>{
+    attempts++;
+    init.signal.addEventListener("abort",()=>{aborted=true;},{once:true});
+    return await new Promise<never>(()=>{/* synthetic hung transport */});
+  };
+  const start=Date.now();
+  await assert.rejects(
+    createEsmsStagingHttpExecutor(hung,settings).execute(request()),
+    /ESMS_STAGING_TRANSPORT_DENIED_OR_UNCERTAIN/,
+  );
+  assert.equal(attempts,1);
+  assert.equal(aborted,true);
+  assert.ok(Date.now()-start>=4800);
+  assert.ok(Date.now()-start<12000);
+});
