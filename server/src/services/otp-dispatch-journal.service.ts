@@ -118,7 +118,7 @@ async function verifyDisposable(connection:PoolConnection):Promise<void>{
     db_name:string;port:number;version:string;
   })[]>("SELECT DATABASE() AS db_name, @@port AS port, VERSION() AS version");
   if(ident[0]?.db_name!=="noteto_dev" ||
-     Number(ident[0]?.port)!==3307 ||
+     Number(ident[0]?.port)!==3306 ||
      !String(ident[0]?.version).startsWith("8.4."))
     denied("DISPOSABLE_DB_NOT_VERIFIED");
 }
