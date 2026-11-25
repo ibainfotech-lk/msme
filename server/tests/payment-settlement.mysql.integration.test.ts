@@ -100,7 +100,7 @@ async function initializeDisposableSchema(): Promise<void> {
   const migrations = await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
   );
-  assert.equal(Number(migrations[0]?.n), 24);
+  assert.equal(Number(migrations[0]?.n), 25);
 
   const columns = await rows(
     "SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'business_subscriptions' AND column_name = 'activation_payment_id'"
