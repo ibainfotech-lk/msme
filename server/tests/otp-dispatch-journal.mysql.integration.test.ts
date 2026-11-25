@@ -56,7 +56,7 @@ before(async()=>{
   const migrations=await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
   );
-  assert.equal(Number(migrations[0]?.n),24);
+  assert.equal(Number(migrations[0]?.n), 25);
 });
 async function fixture(expired=false){
   const challengeId=randomUUID();
