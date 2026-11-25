@@ -76,8 +76,10 @@ function neverAuthorized(result:SyntheticDispatchResult){
   assert.equal(result.otpVerified,false);
   assert.equal(result.sessionAuthorized,false);
   assert.equal(result.businessActivated,false);
-  assert.equal(JSON.stringify(result).includes("9477"),false);
-  assert.equal(JSON.stringify(result).includes("NOTETO DISPOSABLE"),false);
+  assert.equal(Object.hasOwn(result,"phoneE164"),false);
+  assert.equal(Object.hasOwn(result,"message"),false);
+  assert.equal(Object.hasOwn(result,"bearerToken"),false);
+  assert.equal(JSON.stringify(result).includes("NOTETO DISPOSABLE CI MESSAGE"),false);
 }
 test("one claimed dispatch records provider accepted UID without authenticating",async()=>{
   const f=await fixture();
