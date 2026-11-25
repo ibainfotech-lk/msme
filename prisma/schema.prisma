@@ -319,6 +319,7 @@ model CashTransactionCreateRequest {
   createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_create_actor")
 
   @@unique([businessId, idempotencyKey], map: "uq_cash_create_business_key")
+  @@unique([businessId, cashTransactionId], map: "uq_cash_create_tenant_transaction")
   @@index([createdByUserId, createdAt], map: "idx_cash_create_user_time")
   @@map("cash_transaction_create_requests")
 }
@@ -487,6 +488,7 @@ model RegistrationLegalAcceptance {
   business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_registration_legal_business")
   checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_registration_legal_checkout_tenant")
 
+  @@unique([businessId, checkoutOrderId], map: "uq_registration_legal_tenant_checkout")
   @@index([userId, acceptedAt], map: "idx_registration_legal_user_time")
   @@index([businessId, acceptedAt], map: "idx_registration_legal_business_time")
   @@map("registration_legal_acceptances")
