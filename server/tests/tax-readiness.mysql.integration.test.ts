@@ -44,7 +44,7 @@ before(async()=>{
   assert.match(String((await rows("SELECT VERSION() AS token"))[0]?.token),/^8\.4\./);
   assert.equal(Number((await rows(
     "SELECT COUNT(*) AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL"
-  ))[0]?.n),23);
+  ))[0]?.n), 24);
   for(const key of ["taxes.read","taxes.manage","transactions.create","invoices.create"]){
     await db.execute(
       "INSERT INTO permissions(id,`key`,description) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `key`=`key`",
