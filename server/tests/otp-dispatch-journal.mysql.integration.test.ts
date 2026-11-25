@@ -173,6 +173,21 @@ test("uncertain send cannot be silently reset or accepted twice",async()=>{
   assert.equal(state[0].attempt_count,1);
   assert.equal(state[0].provider_uid,firstUid);
 });
+test("consumed OTP challenge cannot later be claimed for delivery",async()=>{
+  const f=await fixture();
+  const {dispatchId}=await reserveOtpDispatch(f);
+  await db.execute("DELETE FROM otp_verifications WHERE id=?",[f.challengeId]);
+  await assert.rejects(
+    ()=>claimOtpDispatchAttempt(dispatchId),
+    error("CHALLENGE_NOT_ACTIVE")
+  );
+  const state=await rows(
+    "SELECT status,attempt_count FROM otp_dispatch_records WHERE id=?",
+    [dispatchId]
+  );
+  assert.equal(state[0].status,"RESERVED");
+  assert.equal(state[0].attempt_count,0);
+});
 test("two concurrent claims permit at most one send attempt",async()=>{
   const f=await fixture();
   const {dispatchId}=await reserveOtpDispatch(f);
