@@ -231,6 +231,9 @@ jobs:
       - name: Verify F17.5i OTP dispatch journal is idempotent and single-attempt in disposable MySQL
         run: node --import tsx --test server/tests/otp-dispatch-journal.mysql.integration.test.ts
 
+      - name: Verify F17.5j synthetic OTP reserve-claim-send and no-resend orchestration
+        run: node --import tsx --test server/tests/otp-dispatch-orchestration.mysql.integration.test.ts
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
