@@ -1104,3 +1104,64 @@ model TaxpayerIntakeDraftAudit {
   @@index([changedByUserId], map: "idx_tax_intake_audit_actor")
   @@map("taxpayer_intake_draft_audits")
 }
+
+
+/**
+ * F.17.5i — durable CI-only OTP dispatch metadata, not OTP plaintext.
+ * No FK to OtpVerification: successful verification deletes the challenge.
+ * Never treat delivery status as authentication or permission to resend.
+ */
+enum OtpDispatchProvider {
+  ESMS
+}
+
+enum OtpDispatchStatus {
+  RESERVED
+  DISPATCH_UNKNOWN
+  ACKNOWLEDGED
+  DELIVERED
+  FAILED
+}
+
+enum OtpDispatchEventType {
+  RESERVED
+  SEND_CLAIMED
+  ACKNOWLEDGED
+  DELIVERED
+  FAILED
+}
+
+model OtpDispatchRecord {
+  id                   String              @id @db.Char(36)
+  challengeId          String              @unique(map: "uq_otp_dispatch_challenge") @map("challenge_id") @db.Char(36)
+  requestKey           String              @unique(map: "uq_otp_dispatch_key") @map("request_key") @db.VarChar(100)
+  requestSha256        String              @map("request_sha256") @db.Char(64)
+  recipientHmacSha256  String              @map("recipient_hmac_sha256") @db.Char(64)
+  provider             OtpDispatchProvider @default(ESMS)
+  status               OtpDispatchStatus   @default(RESERVED)
+  attemptCount         Int                 @default(0) @map("attempt_count") @db.UnsignedTinyInt
+  providerUid          String?             @unique(map: "uq_otp_dispatch_provider_uid") @map("provider_uid") @db.VarChar(128)
+  challengeExpiresAt   DateTime            @map("challenge_expires_at") @db.DateTime(3)
+  attemptedAt          DateTime?           @map("attempted_at") @db.DateTime(3)
+  finalizedAt          DateTime?           @map("finalized_at") @db.DateTime(3)
+  createdAt            DateTime            @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt            DateTime            @default(now()) @map("updated_at") @db.DateTime(3)
+  events               OtpDispatchEvent[]
+
+  @@index([status, createdAt], map: "idx_otp_dispatch_status_created")
+  @@index([challengeExpiresAt], map: "idx_otp_dispatch_expiry")
+  @@map("otp_dispatch_records")
+}
+
+model OtpDispatchEvent {
+  id          String               @id @db.Char(36)
+  dispatchId  String               @map("dispatch_id") @db.Char(36)
+  eventType   OtpDispatchEventType @map("event_type")
+  providerUid String?              @map("provider_uid") @db.VarChar(128)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.DateTime(3)
+  dispatch    OtpDispatchRecord    @relation(fields: [dispatchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([dispatchId, eventType], map: "uq_otp_dispatch_event_once")
+  @@index([dispatchId, createdAt], map: "idx_otp_dispatch_event_time")
+  @@map("otp_dispatch_events")
+}
