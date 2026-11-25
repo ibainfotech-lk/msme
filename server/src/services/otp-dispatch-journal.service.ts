@@ -233,10 +233,13 @@ export async function claimOtpDispatchAttempt(
     if(r.status!=="RESERVED"||Number(r.attempt_count)!==0)
       denied("DISPATCH_ALREADY_ATTEMPTED");
     const [check]=await conn.execute<(RowDataPacket & {live:number})[]>(
-      "SELECT (challenge_expires_at>UTC_TIMESTAMP(3)) AS live "+
-      "FROM otp_dispatch_records WHERE id=? FOR UPDATE",
-      [dispatchId]
+      "SELECT (expires_at>UTC_TIMESTAMP(3)) AS live "+
+      "FROM otp_verifications WHERE id=? FOR UPDATE",
+      [r.challenge_id]
     );
+    // A consumed OTP is deleted from otp_verifications. An older reserved
+    // dispatch MUST NOT be claimed merely because its original expiry
+    // timestamp is still in the future.
     if(check[0]?.live!==1)denied("CHALLENGE_NOT_ACTIVE");
     await conn.execute(
       "UPDATE otp_dispatch_records SET status='DISPATCH_UNKNOWN',"+
