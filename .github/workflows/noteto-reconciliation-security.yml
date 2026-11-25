@@ -144,6 +144,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Validate Prisma schema before disposable CI migration
+        run: npx --no-install prisma validate
+
       - name: Apply migrations only to the disposable CI MySQL service
         run: npx --no-install prisma migrate deploy
 
@@ -224,6 +227,9 @@ jobs:
 
       - name: Verify F17.4 tax readiness, taxpayer draft audits and review checklist (no tax calculation)
         run: npm run test:mysql-tax-readiness
+
+      - name: Verify F17.5i OTP dispatch journal is idempotent and single-attempt in disposable MySQL
+        run: node --import tsx --test server/tests/otp-dispatch-journal.mysql.integration.test.ts
 
   client-build:
     name: React client TypeScript build
