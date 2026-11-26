@@ -234,6 +234,9 @@ jobs:
       - name: Verify F17.5j synthetic OTP reserve-claim-send and no-resend orchestration
         run: node --import tsx --test server/tests/otp-dispatch-orchestration.mysql.integration.test.ts
 
+      - name: Verify F17.5k atomic OTP challenge and dispatch reservation in disposable MySQL
+        run: node --import tsx --test server/tests/otp-atomic-challenge-reservation.mysql.integration.test.ts
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
