@@ -226,10 +226,10 @@ export async function reserveOtpDispatch(
  *
  * The existing createOtpChallenge() API and public routes are untouched.
  */
-export async function createReservedOtpChallengeInDisposableCi(
+async function createReservedOtpChallengeInternal(
   input:{phoneE164:string;idempotencyKey:string},
   connectionFactory:ConnectionFactory=defaultConnection
-):Promise<DispatchSnapshot>{
+):Promise<{snapshot:DispatchSnapshot;otpCode:string|null}>{
   const secret=gate();
   if(!input||!phone.test(input.phoneE164??"")||
      !key.test(input.idempotencyKey??""))
@@ -263,7 +263,7 @@ export async function createReservedOtpChallengeInDisposableCi(
          Number(live[0].is_active)!==1)
         denied("CHALLENGE_NOT_ACTIVE");
       await conn.commit();
-      return snapshot(prior[0],true);
+      return {snapshot:snapshot(prior[0],true),otpCode:null};
     }
     const [existing]=await conn.execute<ChallengeRow[]>(
       "SELECT id,phone,expires_at,"+
@@ -285,7 +285,8 @@ export async function createReservedOtpChallengeInDisposableCi(
     const dispatchId=randomUUID();
     // Random six digits exist only in this call's memory and are never
     // returned, logged, sent or inserted as plaintext.
-    const otpHash=await bcrypt.hash(String(randomInt(100000,1000000)),12);
+    const otpCode=String(randomInt(100000,1000000));
+    const otpHash=await bcrypt.hash(otpCode,12);
     await conn.execute(
       "INSERT INTO otp_verifications (id,phone,otp_hash,attempts,expires_at) "+
       "VALUES (?,?,?,0,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE))",
@@ -309,14 +310,130 @@ export async function createReservedOtpChallengeInDisposableCi(
     await event(conn,dispatchId,"RESERVED");
     await conn.commit();
     return {
-      dispatchId,challengeId,status:"RESERVED",
-      providerUid:null,attemptCount:0,replayed:false,
-      otpVerified:false,sessionAuthorized:false,businessActivated:false,
+      snapshot:{
+        dispatchId,challengeId,status:"RESERVED",
+        providerUid:null,attemptCount:0,replayed:false,
+        otpVerified:false,sessionAuthorized:false,businessActivated:false,
+      },
+      otpCode,
     };
   }catch(e){
     try{await conn.rollback();}catch{/* preserve original error */}
     throw e;
   }finally{conn.release();}
+}
+
+
+/**
+ * Original F.17.5k public behavior is unchanged: code never escapes.
+ * The narrow F.17.5l helper below can hand the transient code only to a
+ * caller-injected, CI-only fake send port, after the irreversible claim.
+ */
+export async function createReservedOtpChallengeInDisposableCi(
+  input:{phoneE164:string;idempotencyKey:string},
+  connectionFactory:ConnectionFactory=defaultConnection
+):Promise<DispatchSnapshot>{
+  const generated=await createReservedOtpChallengeInternal(input,connectionFactory);
+  return generated.snapshot;
+}
+
+export type CiOtpHandoffOutcome =
+  "CI_DISABLED"|"REPLAY_NO_SEND"|"ACCEPTED_NOT_DELIVERED"|
+  "RECONCILIATION_REQUIRED";
+export interface CiOtpHandoffResult {
+  outcome:CiOtpHandoffOutcome;
+  dispatchId:string|null;
+  challengeId:string|null;
+  providerUid:string|null;
+  fakePortInvoked:boolean;
+  resendPermitted:false;
+  otpVerified:false;
+  sessionAuthorized:false;
+  businessActivated:false;
+}
+export interface CiOtpEphemeralPort {
+  /** The only plaintext handoff; NEVER log or persist this argument. */
+  deliver(input:{
+    otpCode:string;
+    phoneE164:string;
+    dispatchId:string;
+  }):Promise<
+    {status:"ACCEPTED";uid:string} |
+    {status:"REJECTED"|"UNCERTAIN"}
+  >;
+}
+function ciHandoffResult(
+  outcome:CiOtpHandoffOutcome,
+  dispatchId:string|null=null,
+  challengeId:string|null=null,
+  providerUid:string|null=null,
+  fakePortInvoked=false
+):CiOtpHandoffResult {
+  return {
+    outcome,dispatchId,challengeId,providerUid,fakePortInvoked,
+    resendPermitted:false,otpVerified:false,
+    sessionAuthorized:false,businessActivated:false,
+  };
+}
+
+/**
+ * Strictly ephemeral F.17.5l test bridge. No HTTP/SMS adapter is imported,
+ * no token is handled, no customer-facing route is wired, and the OTP is
+ * never returned by this function. Only disposable CI can call it.
+ *
+ * This function is NOT a real SMS sender. Sender ID NOTETO is still pending.
+ */
+export async function exerciseEphemeralOtpHandoffInDisposableCi(
+  input:{phoneE164:string;idempotencyKey:string},
+  fakePort:CiOtpEphemeralPort
+):Promise<CiOtpHandoffResult>{
+  // Fail before acquiring a DB connection or generating any OTP.
+  gate();
+  if(!fakePort||typeof fakePort.deliver!=="function")
+    return ciHandoffResult("CI_DISABLED");
+  const created=await createReservedOtpChallengeInternal(input,defaultConnection);
+  const reserved=created.snapshot;
+  if(reserved.replayed||created.otpCode===null)
+    return ciHandoffResult(
+      "REPLAY_NO_SEND",reserved.dispatchId,reserved.challengeId,
+      reserved.providerUid
+    );
+  // Commit the irreversible claim before exposing the code to the fake port.
+  const claimed=await claimOtpDispatchAttempt(reserved.dispatchId);
+  if(claimed.status!=="DISPATCH_UNKNOWN"||claimed.attemptCount!==1)
+    return ciHandoffResult(
+      "RECONCILIATION_REQUIRED",reserved.dispatchId,reserved.challengeId
+    );
+  // Use a narrow lexical scope: do not add OTP to any result, audit, log,
+  // thrown error, provider status or SQL insert.
+  let provider:{status:"ACCEPTED";uid:string}|{status:"REJECTED"|"UNCERTAIN"};
+  try {
+    provider=await fakePort.deliver({
+      otpCode:created.otpCode,phoneE164:input.phoneE164,
+      dispatchId:reserved.dispatchId
+    });
+  }catch{
+    // A failed/ambiguous send may have succeeded remotely. NEVER retry.
+    return ciHandoffResult("RECONCILIATION_REQUIRED",
+      reserved.dispatchId,reserved.challengeId,null,true);
+  }
+  if(!provider||provider.status!=="ACCEPTED"){
+    return ciHandoffResult("RECONCILIATION_REQUIRED",
+      reserved.dispatchId,reserved.challengeId,null,true);
+  }
+  try{
+    const receipt=await recordOtpDispatchAcknowledgement(
+      reserved.dispatchId,provider.uid
+    );
+    if(receipt.status==="ACKNOWLEDGED"&&receipt.providerUid===provider.uid){
+      return ciHandoffResult("ACCEPTED_NOT_DELIVERED",
+        reserved.dispatchId,reserved.challengeId,receipt.providerUid,true);
+    }
+  }catch{
+    // Invalid/duplicate UID or database failure: no second send.
+  }
+  return ciHandoffResult("RECONCILIATION_REQUIRED",
+    reserved.dispatchId,reserved.challengeId,null,true);
 }
 
 /**
