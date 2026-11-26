@@ -9,7 +9,8 @@
  * provider operation, and no automated retry is permitted after a claim,
  * even if the process crashes or the provider times out.
  */
-import {createHash,createHmac,randomUUID} from "node:crypto";
+import {createHash,createHmac,randomUUID,randomInt} from "node:crypto";
+import bcrypt from "bcryptjs";
 import type {PoolConnection,RowDataPacket} from "mysql2/promise";
 import pool from "../config/database";
 
@@ -17,7 +18,7 @@ export type DispatchState=
   "RESERVED"|"DISPATCH_UNKNOWN"|"ACKNOWLEDGED"|"DELIVERED"|"FAILED";
 type DispatchErrorCode=
   | "OTP_DISPATCH_DISABLED" | "INVALID_DISPATCH_REQUEST"
-  | "CHALLENGE_NOT_ACTIVE" | "DISPATCH_KEY_CONFLICT"
+  | "CHALLENGE_NOT_ACTIVE" | "CHALLENGE_ALREADY_ACTIVE" | "DISPATCH_KEY_CONFLICT"
   | "DISPATCH_ALREADY_ATTEMPTED" | "DISPATCH_NOT_FOUND"
   | "DISPATCH_STATE_CONFLICT" | "DISPATCH_PROVIDER_UID_INVALID"
   | "DISPOSABLE_DB_NOT_VERIFIED";
@@ -211,6 +212,109 @@ export async function reserveOtpDispatch(
     };
   }catch(e){
     try{await conn.rollback();}catch{/* do not override error */}
+    throw e;
+  }finally{conn.release();}
+}
+
+/**
+ * F.17.5k — atomic challenge + RESERVED dispatch, in disposable CI ONLY.
+ *
+ * This creates a random, bcrypt-hashed OTP challenge and a related dispatch
+ * reservation in ONE MySQL transaction. The generated OTP plaintext is
+ * deliberately NOT returned, sent or persisted: this is a transactional
+ * integrity test, not an operational OTP delivery workflow.
+ *
+ * The existing createOtpChallenge() API and public routes are untouched.
+ */
+export async function createReservedOtpChallengeInDisposableCi(
+  input:{phoneE164:string;idempotencyKey:string},
+  connectionFactory:ConnectionFactory=defaultConnection
+):Promise<DispatchSnapshot>{
+  const secret=gate();
+  if(!input||!phone.test(input.phoneE164??"")||
+     !key.test(input.idempotencyKey??""))
+    denied("INVALID_DISPATCH_REQUEST");
+  const phoneHash=fingerprint(secret,input.phoneE164);
+  const conn=await connectionFactory();
+  try{
+    await verifyDisposable(conn);
+    await conn.beginTransaction();
+    const [prior]=await conn.execute<JournalRow[]>(
+      "SELECT id,challenge_id,request_sha256,status,provider_uid,"+
+      "attempt_count,challenge_expires_at FROM otp_dispatch_records "+
+      "WHERE request_key=? FOR UPDATE",
+      [input.idempotencyKey]
+    );
+    if(prior[0]){
+      const hash=requestDigest(
+        prior[0].challenge_id,phoneHash,input.idempotencyKey
+      );
+      if(prior[0].request_sha256!==hash)
+        denied("DISPATCH_KEY_CONFLICT");
+      // A key whose OTP was consumed/expired must not recreate the code,
+      // nor accidentally appear valid as a fresh request.
+      const [live]=await conn.execute<ChallengeRow[]>(
+        "SELECT id,phone,expires_at,"+
+        "(expires_at>UTC_TIMESTAMP(3)) AS is_active "+
+        "FROM otp_verifications WHERE id=? LIMIT 1 FOR UPDATE",
+        [prior[0].challenge_id]
+      );
+      if(!live[0]||live[0].phone!==input.phoneE164||
+         Number(live[0].is_active)!==1)
+        denied("CHALLENGE_NOT_ACTIVE");
+      await conn.commit();
+      return snapshot(prior[0],true);
+    }
+    const [existing]=await conn.execute<ChallengeRow[]>(
+      "SELECT id,phone,expires_at,"+
+      "(expires_at>UTC_TIMESTAMP(3)) AS is_active "+
+      "FROM otp_verifications WHERE phone=? LIMIT 1 FOR UPDATE",
+      [input.phoneE164]
+    );
+    if(existing[0]){
+      if(Number(existing[0].is_active)===1)
+        denied("CHALLENGE_ALREADY_ACTIVE");
+      // An expired challenge can be replaced only with a NEW key.
+      // Historical dispatch records remain intact for audit.
+      await conn.execute(
+        "DELETE FROM otp_verifications WHERE id=?",
+        [existing[0].id]
+      );
+    }
+    const challengeId=randomUUID();
+    const dispatchId=randomUUID();
+    // Random six digits exist only in this call's memory and are never
+    // returned, logged, sent or inserted as plaintext.
+    const otpHash=await bcrypt.hash(String(randomInt(100000,1000000)),12);
+    await conn.execute(
+      "INSERT INTO otp_verifications (id,phone,otp_hash,attempts,expires_at) "+
+      "VALUES (?,?,?,0,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 5 MINUTE))",
+      [challengeId,input.phoneE164,otpHash]
+    );
+    const [expires]=await conn.execute<
+      (RowDataPacket & {expires_at:Date})[]
+    >("SELECT expires_at FROM otp_verifications WHERE id=? FOR UPDATE",
+      [challengeId]
+    );
+    if(!expires[0]?.expires_at)
+      denied("CHALLENGE_NOT_ACTIVE");
+    const digest=requestDigest(challengeId,phoneHash,input.idempotencyKey);
+    await conn.execute(
+      "INSERT INTO otp_dispatch_records "+
+      "(id,challenge_id,request_key,request_sha256,recipient_hmac_sha256,"+
+      "challenge_expires_at) VALUES (?,?,?,?,?,?)",
+      [dispatchId,challengeId,input.idempotencyKey,digest,phoneHash,
+       expires[0].expires_at]
+    );
+    await event(conn,dispatchId,"RESERVED");
+    await conn.commit();
+    return {
+      dispatchId,challengeId,status:"RESERVED",
+      providerUid:null,attemptCount:0,replayed:false,
+      otpVerified:false,sessionAuthorized:false,businessActivated:false,
+    };
+  }catch(e){
+    try{await conn.rollback();}catch{/* preserve original error */}
     throw e;
   }finally{conn.release();}
 }
