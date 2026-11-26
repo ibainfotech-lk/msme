@@ -237,6 +237,9 @@ jobs:
       - name: Verify F17.5k atomic OTP challenge and dispatch reservation in disposable MySQL
         run: node --import tsx --test server/tests/otp-atomic-challenge-reservation.mysql.integration.test.ts
 
+      - name: Verify F17.5l CI-only ephemeral code handoff, hash match and no re-send
+        run: node --import tsx --test server/tests/otp-ephemeral-handoff.mysql.integration.test.ts
+
   client-build:
     name: React client TypeScript build
     runs-on: ubuntu-24.04
