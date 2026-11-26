@@ -1,0 +1,29 @@
+/* F.17.3 private Noteto cash-only reports. */
+.noteto-cash-reports{display:grid;gap:15px;padding-top:16px;border-top:2px solid #c3ddd5;color:#164d4a}
+.noteto-cash-reports header{background:#eff7f3;border:1px solid #bfd8cc;border-radius:15px;padding:18px}
+.noteto-cash-reports header h2{margin:0 0 8px}
+.noteto-cash-reports header p{margin:0;line-height:1.5}
+.reports-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end;padding:14px;border:1px solid #c9e0d5;border-radius:12px}
+.report-periods{display:flex;gap:7px;width:100%;flex-wrap:wrap}
+.report-periods button{padding:10px;border:1px solid #4a7a74;color:#164d4a;background:white;border-radius:9px;font-weight:650}
+.report-periods button.active{background:#164d4a;color:white}
+.reports-controls label{display:grid;gap:6px;font-weight:650}
+.reports-controls input{border:1px solid #a9c7bd;border-radius:9px;padding:10px;background:white;color:#164d4a;font:inherit;min-width:150px}
+.reports-controls>.primary-button{margin:0;width:auto}
+.reports-period{font-size:14px;color:#4a7a74;font-weight:650;margin:0}
+.report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.report-metrics>div{padding:15px;border:1px solid #bcd8cb;border-radius:12px;background:#f8fcfa;display:grid;gap:10px}
+.report-metrics span{font-size:13px;color:#4a7a74;font-weight:650}
+.report-metrics strong{font-size:19px;overflow-wrap:anywhere}
+.report-footnote{border-left:3px solid #b89755;background:#fff9eb;border-radius:8px;padding:12px;color:#775a2f;font-size:13px;line-height:1.5}
+.noteto-cash-reports h3{margin:5px 0 0;font-size:17px}
+.report-table-scroll{overflow-x:auto;max-width:100%;border:1px solid #d3e1d9;border-radius:11px}
+.report-table-scroll table{width:100%;border-collapse:collapse;min-width:480px;font-size:14px}
+.report-table-scroll th{text-align:left;background:#edf7f1;color:#164d4a;padding:12px}
+.report-table-scroll td{padding:10px 12px;border-top:1px solid #e2eee7}
+.noteto-cash-reports>.secondary-button{justify-self:start;width:auto;margin:0}
+@media(max-width:700px){.report-metrics{grid-template-columns:1fr}.report-periods button{flex:1}.reports-controls{display:grid;grid-template-columns:1fr}.report-table-scroll table{min-width:450px}}
+
+.report-download-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.report-download-actions button{width:auto;margin:0}
+.report-download-actions button:disabled{opacity:.55}

@@ -1,0 +1,50 @@
+.welcome-card:has(.hold-screen) { max-width: 1080px; }
+
+.hold-screen { display: grid; gap: 20px; color: #164d4a; }
+.hold-header { background: #f5faf8; border: 1px solid #bdd8ce; border-radius: 18px; padding: 24px; }
+.hold-header h2 { font-size: clamp(23px, 3vw, 32px); margin: 12px 0 8px; }
+.hold-header p { margin: 0 0 10px; line-height: 1.6; }
+.hold-pill { display: inline-block; background: #fff1d6; border: 1px solid #dfba78; border-radius: 50px; padding: 6px 13px; color: #815618; font-size: 13px; font-weight: 750; }
+.hold-header .hold-notice { font-weight: 600; margin: 12px 0 0; }
+.hold-dues { border-left: 4px solid #a88036; border-radius: 12px; background: #fff9ec; padding: 16px 18px; }
+.hold-dues p { color: #685b3e; margin: 8px 0 0; line-height: 1.55; }
+.hold-profile { padding: 15px 18px; border: 1px solid #ceded9; border-radius: 12px; }
+.hold-profile h3, .hold-history h3 { margin: 0 0 8px; font-size: 19px; }
+.hold-profile p { margin: 7px 0; }
+.hold-profile p:last-child { color: #5e726c; font-size: 13px; }
+.hold-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px; border-bottom: 1px solid #d4e2dc; }
+.hold-tabs button { background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 5px 5px 0 0; color: #51746e; padding: 12px 15px; text-align: left; font-weight: 700; }
+.hold-tabs button.selected { color: #164d4a; background: #e8f3ee; border-bottom-color: #164d4a; }
+.hold-history { padding: 4px 0; min-height: 90px; }
+.hold-list { display: grid; gap: 10px; }
+.hold-item { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; border: 1px solid #d7e5df; border-radius: 12px; background: #fff; padding: 16px; }
+.hold-item p { color: #61766f; font-size: 14px; margin: 5px 0; overflow-wrap: anywhere; }
+.hold-item small { color: #61766f; }
+.hold-item-actions { display: grid; gap: 8px; justify-items: end; }
+.hold-link { background: transparent; border: 1px solid #4a7a74; border-radius: 8px; padding: 9px 12px; color: #164d4a; font-size: 14px; font-weight: 700; }
+.hold-link:hover { background: #e8f3ee; }
+.hold-note { font-size: 13px; color: #647c75; line-height: 1.6; margin: 12px 0 0; }
+.hold-edit { border: 1px solid #bfd8cf; border-radius: 16px; padding: 22px; background: #f5faf8; display: grid; gap: 12px; }
+.hold-edit h3 { margin: 0 0 6px; }
+.hold-edit label { display: grid; gap: 5px; color: #355e56; font-weight: 650; }
+.hold-edit input, .hold-edit textarea { display: block; width: 100%; border-radius: 8px; border: 1px solid #b6d0c7; padding: 11px 12px; background: #fff; color: #164d4a; font-weight: 400; }
+.hold-edit textarea { min-height: 100px; resize: vertical; font: inherit; }
+.hold-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.hold-actions > button { width: auto; min-width: 145px; margin: 0; }
+.hold-error { color: #9b271d; border: 1px solid #f2c1b9; background: #fff1ee; border-radius: 10px; padding: 12px; overflow-wrap: anywhere; }
+.hold-success { color: #226044; border: 1px solid #b6d9c7; background: #f1f9f2; border-radius: 10px; padding: 12px; }
+@media (max-width: 600px) {
+  .hold-header { padding: 18px; }
+  .hold-tabs button { flex: 1; }
+  .hold-item { align-items: flex-start; }
+  .hold-item-actions { justify-items: start; }
+  .hold-actions > button { width: 100%; }
+}
+
+/* Verified arrears quote — display only, never a checkout surface. */
+.hold-arrears-lines { display: grid; gap: 8px; margin: 14px 0; }
+.hold-arrears-line { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid #e5dac0; }
+.hold-arrears-line > div { display: grid; gap: 4px; }
+.hold-arrears-line small { color: #685b3e; }
+.hold-arrears-total { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 14px 0 4px; border-top: 2px solid #d1b97b; font-size: 19px; }
+.hold-billing-pending { color: #814c21; font-weight: 650; }

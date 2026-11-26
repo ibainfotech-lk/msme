@@ -1,0 +1,20 @@
+.held-profile-editor { border: 1px solid #c4d8d1; border-radius: 14px; background: #f8fbfa; padding: 18px; }
+.held-profile-editor h3 { margin: 0 0 6px; font-size: 19px; color: #164d4a; }
+.held-profile-editor > p { color: #536e67; line-height: 1.5; }
+.held-profile-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; row-gap: 12px; }
+.held-profile-form label { display: grid; gap: 6px; font-size: 14px; font-weight: 650; color: #164d4a; min-width: 0; }
+.held-profile-form input, .held-profile-form select, .held-profile-form textarea {
+  width: 100%; min-width: 0; border: 1px solid #b8d2c8; border-radius: 8px;
+  background: white; color: #164d4a; padding: 10px 12px; font: inherit; font-weight: 400;
+}
+.held-profile-form input[readonly] { color: #61756f; background: #edf2ef; cursor: not-allowed; }
+.held-profile-form textarea { min-height: 82px; resize: vertical; }
+.held-profile-note { grid-column: 1 / -1; font-size: 13px; color: #5f756c; margin: 0; }
+.held-profile-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; }
+.held-profile-actions button { padding: 10px 14px; border: 1px solid #164d4a; border-radius: 8px; background: #164d4a; color: #fff; font-weight: 700; }
+.held-profile-actions button + button { background: #fff; color: #164d4a; }
+.held-profile-actions button:disabled { opacity: 0.55; }
+@media (max-width: 650px) {
+  .held-profile-form { grid-template-columns: 1fr; }
+  .held-profile-editor { padding: 14px; }
+}

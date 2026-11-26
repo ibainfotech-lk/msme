@@ -23,6 +23,8 @@ const en = {
     // User registration
     registerTitle: "Create your account",
     fullName: "Full name",
+    emailLabel: "Email address",
+    invalidEmail: "Enter a valid email address.",
     businessName: "Business name",
     businessType: "Business type",
     sole: "Sole proprietor",
@@ -30,6 +32,15 @@ const en = {
     community: "Community organization",
     create: "Create account",
     loginRegister: "Go to Login",
+    legalTitle: "Terms and Privacy",
+    legalDescription: "Review the terms and privacy notice before confirming registration. These links open in a new tab.",
+    legalPlanLabel: "Selected plan",
+    termsLink: "Terms and Conditions",
+    privacyLink: "Privacy Notice",
+    acceptTerms: "I have read and agree to the Terms and Conditions. *",
+    acknowledgePrivacy: "I have read and acknowledge the Privacy Notice. *",
+    legalRequired: "You must accept the Terms and acknowledge the Privacy Notice to register.",
+    legalDraftNotice: "Pre-launch testing: legal documents are English drafts pending approval and translation.",
 
     // Login
     loginTitle: "Login to Noteto",

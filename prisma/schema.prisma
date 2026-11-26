@@ -7,6 +7,69 @@ datasource db {
   provider = "mysql"
 }
 
+enum IntroductoryTrialGrantStatus {
+  RESERVED
+  ACTIVATED
+}
+
+// Trusted identity evidence is created only by a verified administrative process.
+// No browser input alone should create rows here.
+model VerifiedBusinessIdentity {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @unique(map: "uq_verified_identity_business") @map("business_id") @db.Char(36)
+  identityFingerprint String @map("identity_fingerprint") @db.Char(64)
+  verificationMethod String @map("verification_method") @db.VarChar(50)
+  evidenceReferenceSha256 String @map("evidence_reference_sha256") @db.Char(64)
+  verifiedAt DateTime @map("verified_at") @db.DateTime(3)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_verified_identity_business")
+  @@index([identityFingerprint], map: "idx_verified_identity_fingerprint")
+  @@map("verified_business_identities")
+}
+
+// Reservation is intentionally not an activated subscription or a payment.
+model IntroductoryTrialGrant {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @unique(map: "uq_intro_trial_business") @map("business_id") @db.Char(36)
+  identityFingerprint String @unique(map: "uq_intro_trial_identity") @map("identity_fingerprint") @db.Char(64)
+  checkoutOrderId String @unique(map: "uq_intro_trial_checkout") @map("checkout_order_id") @db.Char(36)
+  status IntroductoryTrialGrantStatus @default(RESERVED)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  activatedAt DateTime? @map("activated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_intro_trial_business")
+  checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_intro_trial_checkout_tenant")
+  @@unique([businessId, checkoutOrderId], map: "uq_intro_trial_checkout_tenant")
+  @@index([status, createdAt], map: "idx_intro_trial_status_created")
+  @@map("introductory_trial_grants")
+}
+
+enum IdentityOfferKind {
+  TRIAL
+  PROMOTION
+}
+
+// One identity can reserve at most one free offer, across trial and promotion.
+model IdentityOfferClaim {
+  identityFingerprint String @id @map("identity_fingerprint") @db.Char(64)
+  businessId String @map("business_id") @db.Char(36)
+  offerKind IdentityOfferKind @map("offer_kind")
+  reservationId String @map("reservation_id") @db.Char(36)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_offer_claim_business")
+  @@unique([offerKind, reservationId], map: "uq_offer_kind_reservation")
+  @@index([businessId], map: "idx_offer_claim_business")
+  @@map("identity_offer_claims")
+}
+
+enum PromotionRedemptionStatus {
+  RESERVED
+  APPLIED
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -109,6 +172,328 @@ enum SubscriptionEventType {
   PROMOTION_APPLIED
 }
 
+enum MonthlyDueStatus {
+  OPEN
+  SETTLED
+  WAIVED
+  VOID
+}
+
+// Historical monthly obligations must be explicitly posted by a reviewed
+// billing process. No automatic charges are created by this model.
+model SubscriptionMonthlyDue {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  billingMonth DateTime @map("billing_month") @db.Date
+  dueAt DateTime @map("due_at") @db.DateTime(3)
+  chargeLkr Decimal @map("charge_lkr") @db.Decimal(12,2)
+  waivedLkr Decimal @default(0.00) @map("waived_lkr") @db.Decimal(12,2)
+  status MonthlyDueStatus @default(OPEN)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_monthly_due_subscription_tenant")
+  allocations SubscriptionDueAllocation[]
+
+  @@unique([subscriptionId, billingMonth], map: "uq_monthly_due_subscription_month")
+  @@unique([businessId, id], map: "uq_monthly_due_tenant_id")
+  @@index([businessId, dueAt, status], map: "idx_monthly_due_business_due")
+  @@map("subscription_monthly_dues")
+}
+
+// Allocation creation/settlement is NOT implemented in F.16.5.4a.
+// Tenant-safe composite FKs prevent crossing business boundaries.
+model SubscriptionDueAllocation {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  monthlyDueId String @map("monthly_due_id") @db.Char(36)
+  paymentId String @map("payment_id") @db.Char(36)
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12,2)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  monthlyDue SubscriptionMonthlyDue @relation(fields: [businessId, monthlyDueId], references: [businessId, id], onDelete: Restrict, map: "fk_due_allocation_due_tenant")
+  payment PlatformPaymentTransaction @relation(fields: [businessId, paymentId], references: [businessId, id], onDelete: Restrict, map: "fk_due_allocation_payment_tenant")
+
+  @@unique([monthlyDueId, paymentId], map: "uq_due_allocation_pair")
+  @@index([businessId, monthlyDueId], map: "idx_due_allocation_business_due")
+  @@index([businessId, paymentId], map: "idx_due_allocation_business_payment")
+  @@map("subscription_due_allocations")
+}
+
+enum ArchivedReportType {
+  DAILY
+  WEEKLY
+  YEARLY
+}
+
+enum CashTransactionType {
+  INCOME
+  EXPENSE
+}
+
+model CashTransaction {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  transactionType CashTransactionType @map("transaction_type")
+  amountLkr Decimal @map("amount_lkr") @db.Decimal(12,2)
+  category String @db.VarChar(100)
+  description String @default("") @db.VarChar(500)
+  occurredOn DateTime @map("occurred_on") @db.Date
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+  version Int @default(1) @db.UnsignedInt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_business")
+  createdBy User @relation("CashTransactionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_transaction_creator")
+  edits CashTransactionEditAudit[]
+  createRequest CashTransactionCreateRequest?
+
+  @@unique([businessId, id], map: "uq_cash_transaction_business_id")
+  @@index([businessId, occurredOn, transactionType], map: "idx_cash_transactions_business_date")
+  @@map("cash_transactions")
+}
+
+enum InvoiceIssueStatus {
+  ISSUED
+}
+
+model SalesInvoice {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  invoiceNumber String @map("invoice_number") @db.VarChar(40)
+  billingMonth DateTime @map("billing_month") @db.Date
+  invoiceSequence Int @map("invoice_sequence") @db.UnsignedInt
+  issuedOn DateTime @map("issued_on") @db.Date
+  customerName String @map("customer_name") @db.VarChar(150)
+  customerEmail String? @map("customer_email") @db.VarChar(191)
+  notes String @default("") @db.VarChar(500)
+  totalLkr Decimal @map("total_lkr") @db.Decimal(12,2)
+  status InvoiceIssueStatus @default(ISSUED)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(100)
+  requestSha256 String @map("request_sha256") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_sales_invoice_business")
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_sales_invoice_subscription_tenant")
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_sales_invoice_creator")
+  lines SalesInvoiceLine[]
+
+  @@unique([businessId, id], map: "uq_sales_invoice_business_id")
+  @@unique([businessId, invoiceNumber], map: "uq_sales_invoice_business_number")
+  @@unique([businessId, billingMonth, invoiceSequence], map: "uq_sales_invoice_month_sequence")
+  @@unique([businessId, idempotencyKey], map: "uq_sales_invoice_business_idempotency")
+  @@index([businessId, createdAt, id], map: "idx_sales_invoice_business_issued")
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceLine {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  invoiceId String @map("invoice_id") @db.Char(36)
+  lineNumber Int @map("line_number") @db.UnsignedInt
+  description String @db.VarChar(200)
+  quantity Decimal @db.Decimal(10,2)
+  unitPriceLkr Decimal @map("unit_price_lkr") @db.Decimal(12,2)
+  lineTotalLkr Decimal @map("line_total_lkr") @db.Decimal(12,2)
+
+  invoice SalesInvoice @relation(fields: [businessId, invoiceId], references: [businessId, id], onDelete: Restrict, map: "fk_sales_invoice_line_tenant")
+
+  @@unique([invoiceId, lineNumber], map: "uq_sales_invoice_line_number")
+  @@index([businessId, invoiceId], map: "idx_sales_invoice_lines_tenant_invoice")
+  @@map("sales_invoice_lines")
+}
+
+model CashTransactionCreateRequest {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  cashTransactionId String @unique(map: "uq_cash_create_transaction") @map("cash_transaction_id") @db.Char(36)
+  createdByUserId String @map("created_by_user_id") @db.Char(36)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(100)
+  requestSha256 String @map("request_sha256") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  transaction CashTransaction @relation(fields: [businessId, cashTransactionId], references: [businessId, id], onDelete: Restrict, map: "fk_cash_create_tenant_transaction")
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, map: "fk_cash_create_actor")
+
+  @@unique([businessId, idempotencyKey], map: "uq_cash_create_business_key")
+  @@unique([businessId, cashTransactionId], map: "uq_cash_create_tenant_transaction")
+  @@index([createdByUserId, createdAt], map: "idx_cash_create_user_time")
+  @@map("cash_transaction_create_requests")
+}
+
+model CashTransactionEditAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  cashTransactionId String @map("cash_transaction_id") @db.Char(36)
+  editedByUserId String @map("edited_by_user_id") @db.Char(36)
+  priorVersion Int @map("prior_version") @db.UnsignedInt
+  newVersion Int @map("new_version") @db.UnsignedInt
+  oldAmountLkr Decimal @map("old_amount_lkr") @db.Decimal(12,2)
+  newAmountLkr Decimal @map("new_amount_lkr") @db.Decimal(12,2)
+  oldCategory String @map("old_category") @db.VarChar(100)
+  newCategory String @map("new_category") @db.VarChar(100)
+  oldDescription String @map("old_description") @db.VarChar(500)
+  newDescription String @map("new_description") @db.VarChar(500)
+  oldOccurredOn DateTime @map("old_occurred_on") @db.Date
+  newOccurredOn DateTime @map("new_occurred_on") @db.Date
+  reason String @db.VarChar(500)
+  editedAt DateTime @default(now()) @map("edited_at") @db.DateTime(3)
+
+  cashTransaction CashTransaction @relation(fields: [businessId, cashTransactionId], references: [businessId, id], onDelete: Restrict, map: "fk_cash_edit_transaction_tenant")
+  editedBy User @relation("CashTransactionEditor", fields: [editedByUserId], references: [id], onDelete: Restrict, map: "fk_cash_edit_actor")
+
+  @@unique([cashTransactionId, newVersion], map: "uq_cash_edit_revision")
+  @@index([businessId, editedAt], map: "idx_cash_edit_business_time")
+  @@map("cash_transaction_edit_audits")
+}
+
+model BusinessProfileDetails {
+  businessId String @id @map("business_id") @db.Char(36)
+  displayName String @default("") @map("display_name") @db.VarChar(150)
+  contactEmail String @default("") @map("contact_email") @db.VarChar(191)
+  address String @default("") @db.VarChar(350)
+  version Int @default(0) @db.UnsignedInt
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_profile_details_business")
+
+  @@map("business_profile_details")
+}
+
+model BusinessProfileEditAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  editedByUserId String @map("edited_by_user_id") @db.Char(36)
+  oldVersion Int @map("old_version") @db.UnsignedInt
+  newVersion Int @map("new_version") @db.UnsignedInt
+  oldProfile Json @map("old_profile")
+  newProfile Json @map("new_profile")
+  editedAt DateTime @default(now()) @map("edited_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_profile_audit_business")
+  editedBy User @relation(fields: [editedByUserId], references: [id], onDelete: Restrict, map: "fk_profile_audit_actor")
+
+  @@unique([businessId, newVersion], map: "uq_profile_revision")
+  @@index([businessId, editedAt], map: "idx_profile_audit_business_time")
+  @@map("business_profile_edit_audits")
+}
+
+enum HoldReviewTransition {
+  PLACE_HOLD
+  RESTORE_ACCESS
+}
+
+enum HoldReviewDecisionStatus {
+  POLICY_READY
+}
+
+model SubscriptionHoldReviewJournal {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  reviewerUserId String @map("reviewer_user_id") @db.Char(36)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(191)
+  transitionType HoldReviewTransition @map("transition_type")
+  decisionStatus HoldReviewDecisionStatus @map("decision_status")
+  evidenceSha256 String @map("evidence_sha256") @db.Char(64)
+  statementAsOf DateTime @map("statement_as_of") @db.DateTime(3)
+  outstandingLkr Decimal @map("outstanding_lkr") @db.Decimal(12,2)
+  noticeReference String? @map("notice_reference") @db.VarChar(191)
+  graceEndsAt DateTime? @map("grace_ends_at") @db.DateTime(3)
+  reviewReason String @map("review_reason") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_hold_review_subscription_tenant")
+  reviewer User @relation(fields: [reviewerUserId], references: [id], onDelete: Restrict, map: "fk_hold_review_reviewer")
+
+  @@unique([businessId, idempotencyKey], map: "uq_hold_review_idempotency_business")
+  @@index([businessId, subscriptionId, createdAt], map: "idx_hold_review_subscription_time")
+  @@index([reviewerUserId, createdAt], map: "idx_hold_review_actor_time")
+  @@map("subscription_hold_review_journal")
+}
+
+enum HoldNoticeChannel {
+  SMS
+  EMAIL
+  WHATSAPP
+}
+
+enum HoldNoticeProvenance {
+  UNVERIFIED
+  VERIFIED
+}
+
+model SubscriptionHoldNoticeReceipt {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  provider String @db.VarChar(60)
+  deliveryChannel HoldNoticeChannel @map("delivery_channel")
+  providerDeliveryReference String @map("provider_delivery_reference") @db.VarChar(191)
+  providerEventSha256 String @map("provider_event_sha256") @db.Char(64)
+  noticeTemplateVersion String @map("notice_template_version") @db.VarChar(40)
+  termsVersion String @map("terms_version") @db.VarChar(40)
+  billingStatementSha256 String @map("billing_statement_sha256") @db.Char(64)
+  deliveredAt DateTime @map("delivered_at") @db.DateTime(3)
+  verifiedAt DateTime? @map("verified_at") @db.DateTime(3)
+  graceEndsAt DateTime @map("grace_ends_at") @db.DateTime(3)
+  provenanceStatus HoldNoticeProvenance @default(UNVERIFIED) @map("provenance_status")
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.DateTime(3)
+
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_hold_notice_subscription_tenant")
+
+  @@unique([provider, providerDeliveryReference], map: "uq_hold_notice_provider_delivery")
+  @@index([businessId, subscriptionId, deliveredAt], map: "idx_hold_notice_business_time")
+  @@map("subscription_hold_notice_receipts")
+}
+
+model ArchivedReportSnapshot {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  subscriptionId String @map("subscription_id") @db.Char(36)
+  generatedByUserId String @map("generated_by_user_id") @db.Char(36)
+  reportType ArchivedReportType @map("report_type")
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd DateTime @map("period_end") @db.Date
+  contentType String @default("application/pdf") @map("content_type") @db.VarChar(40)
+  contentSha256 String @map("content_sha256") @db.Char(64)
+  contentLength Int @map("content_length") @db.UnsignedInt
+  pdfBytes Bytes @map("pdf_bytes") @db.MediumBlob
+  generatedAt DateTime @map("generated_at") @db.DateTime(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_report_archive_business")
+  subscription BusinessSubscription @relation(fields: [businessId, subscriptionId], references: [businessId, id], onDelete: Restrict, map: "fk_report_archive_subscription_tenant")
+  generatedBy User @relation(fields: [generatedByUserId], references: [id], onDelete: Restrict, map: "fk_report_archive_generator")
+
+  @@unique([businessId, id], map: "uq_report_archive_tenant_id")
+  @@index([businessId, generatedAt], map: "idx_report_archive_business_generated")
+  @@index([subscriptionId, generatedAt], map: "idx_report_archive_subscription_generated")
+  @@map("archived_report_snapshots")
+}
+
+model RegistrationLegalAcceptance {
+  id String @id @default(uuid()) @db.Char(36)
+  userId String @map("user_id") @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  checkoutOrderId String @unique(map: "uq_registration_legal_checkout") @map("checkout_order_id") @db.Char(36)
+  termsVersion String @map("terms_version") @db.VarChar(40)
+  privacyNoticeVersion String @map("privacy_notice_version") @db.VarChar(40)
+  acceptanceLanguage PreferredLanguage @map("acceptance_language")
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, map: "fk_registration_legal_user")
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_registration_legal_business")
+  checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_registration_legal_checkout_tenant")
+
+  @@unique([businessId, checkoutOrderId], map: "uq_registration_legal_tenant_checkout")
+  @@index([userId, acceptedAt], map: "idx_registration_legal_user_time")
+  @@index([businessId, acceptedAt], map: "idx_registration_legal_business_time")
+  @@map("registration_legal_acceptances")
+}
+
 model User {
   id                String            @id @default(uuid()) @db.Char(36)
   phone             String            @unique @db.VarChar(20)
@@ -124,6 +509,17 @@ model User {
   memberships         BusinessMembership[]
   sentInvitations     BusinessInvitation[] @relation("InvitationSender")
   acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptor")
+  legalAcceptances RegistrationLegalAcceptance[]
+  generatedReportSnapshots ArchivedReportSnapshot[]
+  createdCashTransactions CashTransaction[] @relation("CashTransactionCreator")
+  editedCashTransactions CashTransactionEditAudit[] @relation("CashTransactionEditor")
+  createdCashTransactionRequests CashTransactionCreateRequest[]
+  issuedSalesInvoices SalesInvoice[]
+  businessProfileEdits BusinessProfileEditAudit[]
+  holdReviewJournalEntries SubscriptionHoldReviewJournal[]
+  reviewedTaxRuleSources TaxRuleSourceReview[]
+  editedTaxpayerIntakeDrafts TaxpayerIntakeDraft[]
+  changedTaxpayerIntakeAudits TaxpayerIntakeDraftAudit[]
 
   @@map("users")
 }
@@ -144,7 +540,17 @@ model Business {
   subscriptions        BusinessSubscription[]       @relation("BusinessSubscriptionHistory")
   checkoutOrders       CheckoutOrder[]
   paymentTransactions  PlatformPaymentTransaction[]
+  archivedReportSnapshots ArchivedReportSnapshot[]
+  cashTransactions CashTransaction[]
+  salesInvoices SalesInvoice[]
+  profileDetails BusinessProfileDetails?
+  profileEditAudits BusinessProfileEditAudit[]
   promotionRedemptions PromotionRedemption[]
+  legalAcceptances RegistrationLegalAcceptance[]
+  identityOfferClaims IdentityOfferClaim[]
+  taxpayerIntakeDrafts TaxpayerIntakeDraft[]
+  verifiedIdentity VerifiedBusinessIdentity?
+  introductoryTrialGrant IntroductoryTrialGrant?
   currentSubscription  BusinessSubscription?        @relation("CurrentBusinessSubscription", fields: [id, currentSubscriptionId], references: [businessId, id], onDelete: Restrict)
 
   @@unique([id, currentSubscriptionId])
@@ -290,6 +696,16 @@ model BusinessSubscription {
   plan         SubscriptionPlan          @relation(fields: [planId], references: [id], onDelete: Restrict)
   entitlements SubscriptionEntitlement[]
   events       SubscriptionEvent[]
+  monthlyDues  SubscriptionMonthlyDue[]
+  holdReviewJournalEntries SubscriptionHoldReviewJournal[]
+  holdNoticeReceipts SubscriptionHoldNoticeReceipt[]
+  salesInvoices SalesInvoice[]
+  archivedReportSnapshots ArchivedReportSnapshot[]
+  heldAt DateTime? @map("held_at") @db.DateTime(3)
+
+  // One verified platform payment may activate at most one subscription.
+  activationPaymentId String? @unique @map("activation_payment_id") @db.Char(36)
+  activationPayment PlatformPaymentTransaction? @relation("SubscriptionActivationPayment", fields: [activationPaymentId], references: [id], onDelete: Restrict)
 
   @@unique([businessId, id])
   @@index([businessId, status])
@@ -322,6 +738,9 @@ model CheckoutOrder {
   plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
 
   payments PlatformPaymentTransaction[]
+  introductoryTrialGrant IntroductoryTrialGrant?
+  promotionRedemption PromotionRedemption?
+  registrationLegalAcceptance RegistrationLegalAcceptance?
 
   @@unique([businessId, id])
   @@index([businessId, status])
@@ -358,7 +777,10 @@ model PlatformPaymentTransaction {
   checkoutOrder CheckoutOrder @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict)
 
   reconciliationEvidence PaymentReconciliationEvidence[]
+  activationSubscription BusinessSubscription? @relation("SubscriptionActivationPayment")
+  dueAllocations SubscriptionDueAllocation[]
 
+  @@unique([businessId, id], map: "uq_payment_business_id")
   @@unique([gateway, gatewayTransactionId])
   @@unique([gateway, gatewayOrderId], map: "uq_payment_gateway_order")
   @@index([businessId, status])
@@ -421,13 +843,19 @@ model PromotionRedemption {
   businessId      String @map("business_id") @db.Char(36)
 
   freeMonthsGranted Int @map("free_months_granted")
+  // NULL only for legacy entries not yet linked to a reviewed identity.
+  identityFingerprint String? @unique(map: "uq_promo_identity") @map("identity_fingerprint") @db.Char(64)
+  checkoutOrderId String? @map("checkout_order_id") @db.Char(36)
+  reservationStatus PromotionRedemptionStatus @default(APPLIED) @map("reservation_status")
 
   redeemedAt DateTime @default(now()) @map("redeemed_at")
 
   promotionCode PromotionCode @relation(fields: [promotionCodeId], references: [id], onDelete: Restrict)
   business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  checkoutOrder CheckoutOrder? @relation(fields: [businessId, checkoutOrderId], references: [businessId, id], onDelete: Restrict, map: "fk_promo_checkout_tenant")
 
   @@unique([promotionCodeId, businessId])
+  @@unique([businessId, checkoutOrderId], map: "uq_promo_checkout_tenant")
   @@index([businessId, redeemedAt])
   @@map("promotion_redemptions")
 }
@@ -573,4 +1001,169 @@ model PaymentReconciliationEvidence {
   @@index([authenticationStatus, receivedAt], map: "idx_recon_auth_received")
   @@index([webhookEventId], map: "idx_recon_webhook")
   @@map("payment_reconciliation_evidence")
+}
+
+
+/**
+ * F.17.4b: reviewed statutory source EVIDENCE, not tax rates or amounts.
+ * No source is approved by default. Approval must be a separate, independently
+ * controlled process; this model deliberately has no customer-write API.
+ */
+enum TaxRuleSourceScope {
+  INDIVIDUAL
+  COMPANY
+  OTHER_ENTITY
+}
+
+enum TaxRuleSourceReviewStatus {
+  DRAFT
+  REVIEWED
+  REVOKED
+}
+
+model TaxRuleSourceReview {
+  id String @id @default(uuid()) @db.Char(36)
+  sourceCode String @map("source_code") @db.VarChar(64)
+  revision Int @db.UnsignedInt
+  taxpayerScope TaxRuleSourceScope @map("taxpayer_scope")
+  assessmentYearStart Int @map("assessment_year_start") @db.UnsignedInt
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo DateTime @map("effective_to") @db.Date
+  sourceTitle String @map("source_title") @db.VarChar(250)
+  sourceUri String @map("source_uri") @db.VarChar(700)
+  sourceSha256 String @map("source_sha256") @db.Char(64)
+  reviewStatus TaxRuleSourceReviewStatus @default(DRAFT) @map("review_status")
+  reviewedByUserId String? @map("reviewed_by_user_id") @db.Char(36)
+  reviewedAt DateTime? @map("reviewed_at") @db.DateTime(3)
+  reviewNote String @default("") @map("review_note") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  reviewer User? @relation(fields: [reviewedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_rule_source_reviewer")
+
+  @@unique([sourceCode, revision], map: "uq_tax_rule_source_code_revision")
+  @@index([taxpayerScope, assessmentYearStart, reviewStatus], map: "idx_tax_rule_source_scope_year_status")
+  @@index([reviewedByUserId], map: "idx_tax_rule_source_reviewed_by")
+  @@map("tax_rule_source_reviews")
+}
+
+
+/** Business-entered unverified, non-identifying preparation answers ONLY. */
+enum TaxpayerCategoryClaim {
+  UNKNOWN
+  INDIVIDUAL
+  COMPANY
+  OTHER_ENTITY
+  NOT_SURE
+}
+enum TaxpayerResidencyClaim {
+  UNKNOWN
+  RESIDENT
+  NON_RESIDENT
+  NOT_SURE
+}
+enum TaxpayerYesNoClaim {
+  UNKNOWN
+  YES
+  NO
+  NOT_SURE
+}
+model TaxpayerIntakeDraft {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  assessmentYearStart Int @map("assessment_year_start") @db.UnsignedInt
+  taxpayerCategoryClaim TaxpayerCategoryClaim @default(UNKNOWN) @map("taxpayer_category_claim")
+  residencyClaim TaxpayerResidencyClaim @default(UNKNOWN) @map("residency_claim")
+  otherIncomeClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("other_income_claim")
+  capitalAssetsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("capital_assets_claim")
+  nonDeductibleCostsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("non_deductible_costs_claim")
+  withholdingCreditsClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("withholding_credits_claim")
+  ownerIsTaxpayerClaim TaxpayerYesNoClaim @default(UNKNOWN) @map("owner_is_taxpayer_claim")
+  revision Int @default(1) @db.UnsignedInt
+  updatedByUserId String @map("updated_by_user_id") @db.Char(36)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.DateTime(3)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, map: "fk_tax_intake_business")
+  updatedBy User @relation(fields: [updatedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_intake_editor")
+  audits TaxpayerIntakeDraftAudit[]
+  @@unique([businessId, assessmentYearStart], map: "uq_tax_intake_business_year")
+  @@unique([businessId, id], map: "uq_tax_intake_tenant_id")
+  @@index([updatedByUserId], map: "idx_tax_intake_editor")
+  @@map("taxpayer_intake_drafts")
+}
+model TaxpayerIntakeDraftAudit {
+  id String @id @default(uuid()) @db.Char(36)
+  businessId String @map("business_id") @db.Char(36)
+  draftId String @map("draft_id") @db.Char(36)
+  revision Int @db.UnsignedInt
+  changedByUserId String @map("changed_by_user_id") @db.Char(36)
+  previousClaimsJson Json? @map("previous_claims_json")
+  updatedClaimsJson Json @map("updated_claims_json")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  draft TaxpayerIntakeDraft @relation(fields: [businessId, draftId], references: [businessId, id], onDelete: Restrict, map: "fk_tax_intake_audit_draft_tenant")
+  changedBy User @relation(fields: [changedByUserId], references: [id], onDelete: Restrict, map: "fk_tax_intake_audit_actor")
+  @@unique([draftId, revision], map: "uq_tax_intake_audit_revision")
+  @@index([businessId, draftId, revision], map: "idx_tax_intake_audit_tenant")
+  @@index([changedByUserId], map: "idx_tax_intake_audit_actor")
+  @@map("taxpayer_intake_draft_audits")
+}
+
+
+/**
+ * F.17.5i — durable CI-only OTP dispatch metadata, not OTP plaintext.
+ * No FK to OtpVerification: successful verification deletes the challenge.
+ * Never treat delivery status as authentication or permission to resend.
+ */
+enum OtpDispatchProvider {
+  ESMS
+}
+
+enum OtpDispatchStatus {
+  RESERVED
+  DISPATCH_UNKNOWN
+  ACKNOWLEDGED
+  DELIVERED
+  FAILED
+}
+
+enum OtpDispatchEventType {
+  RESERVED
+  SEND_CLAIMED
+  ACKNOWLEDGED
+  DELIVERED
+  FAILED
+}
+
+model OtpDispatchRecord {
+  id                   String              @id @db.Char(36)
+  challengeId          String              @unique(map: "uq_otp_dispatch_challenge") @map("challenge_id") @db.Char(36)
+  requestKey           String              @unique(map: "uq_otp_dispatch_key") @map("request_key") @db.VarChar(100)
+  requestSha256        String              @map("request_sha256") @db.Char(64)
+  recipientHmacSha256  String              @map("recipient_hmac_sha256") @db.Char(64)
+  provider             OtpDispatchProvider @default(ESMS)
+  status               OtpDispatchStatus   @default(RESERVED)
+  attemptCount         Int                 @default(0) @map("attempt_count") @db.UnsignedTinyInt
+  providerUid          String?             @unique(map: "uq_otp_dispatch_provider_uid") @map("provider_uid") @db.VarChar(128)
+  challengeExpiresAt   DateTime            @map("challenge_expires_at") @db.DateTime(3)
+  attemptedAt          DateTime?           @map("attempted_at") @db.DateTime(3)
+  finalizedAt          DateTime?           @map("finalized_at") @db.DateTime(3)
+  createdAt            DateTime            @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt            DateTime            @default(now()) @map("updated_at") @db.DateTime(3)
+  events               OtpDispatchEvent[]
+
+  @@index([status, createdAt], map: "idx_otp_dispatch_status_created")
+  @@index([challengeExpiresAt], map: "idx_otp_dispatch_expiry")
+  @@map("otp_dispatch_records")
+}
+
+model OtpDispatchEvent {
+  id          String               @id @db.Char(36)
+  dispatchId  String               @map("dispatch_id") @db.Char(36)
+  eventType   OtpDispatchEventType @map("event_type")
+  providerUid String?              @map("provider_uid") @db.VarChar(128)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.DateTime(3)
+  dispatch    OtpDispatchRecord    @relation(fields: [dispatchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([dispatchId, eventType], map: "uq_otp_dispatch_event_once")
+  @@index([dispatchId, createdAt], map: "idx_otp_dispatch_event_time")
+  @@map("otp_dispatch_events")
 }

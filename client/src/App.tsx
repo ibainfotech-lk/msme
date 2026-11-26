@@ -1,17 +1,51 @@
 
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
+import HeldAccountScreen from "./components/HeldAccountScreen";
+import CoreCashbookScreen from "./components/CoreCashbookScreen";
 import { getTranslations, type Language } from "./locales";
+import {
+  REGISTRATION_TERMS_VERSION, REGISTRATION_PRIVACY_VERSION,
+  REGISTRATION_TERMS_URL, REGISTRATION_PRIVACY_URL,
+} from "./legal/registration-legal";
 
 
 
 type Screen =
   | "language"
+  | "plan"
+  | "checkout"
   | "phone"
   | "login"
   | "otp"
   | "register"
-  | "dashboard";
+  | "dashboard"
+  | "hold";
+interface PaidPlan {
+  id: string;
+  code: string;
+  name: string;
+  price_lkr: string;
+  billing_interval: "MONTHLY" | "YEARLY";
+  invoice_limit: number;
+  trial_days: number;
+}
+
+interface PendingCheckout {
+  id: string;
+  plan_code: string;
+  amount_lkr: string;
+  status: string;
+  expires_at: string | null;
+}
+
+interface MemberBusiness {
+  id: string;
+  name: string;
+  status: string;
+  current_subscription_id: string | null;
+}
+
 type TransactionType = "income" | "expense";
 type BusinessType =
   | "sole_proprietor"
@@ -33,6 +67,15 @@ interface Summary {
   balance: number;
 }
 
+// The held-account interface is opt-in for private development testing only.
+// Server authorization remains authoritative; this flag grants no backend access.
+const heldUiEnabled = import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_HOLD_MODE_UI_ENABLED === "true";
+// Private pilot only. Both server-side RBAC/subscription checks and this UI
+// guard are required; no production route or customer data is enabled.
+const cashbookUiEnabled = import.meta.env.DEV &&
+  import.meta.env.VITE_NOTETO_F17_BOOKKEEPING_UI_ENABLED === "true";
+
 const languages = [
   { id: "en" as const, name: "English", subtitle: "Continue in English" },
   { id: "ta" as const, name: "தமிழ்", subtitle: "தமிழில் தொடரவும்" },
@@ -49,9 +92,18 @@ export default function App() {
   });
 
   const [screen, setScreen] = useState<Screen>("language");
+  const [plans, setPlans] = useState<PaidPlan[]>([]);
+  const [selectedPlanCode, setSelectedPlanCode] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [pendingCheckout, setPendingCheckout] = useState<PendingCheckout | null>(null);
+  const [selectedBusiness, setSelectedBusiness] = useState<MemberBusiness | null>(null);
+  const [registrationKey, setRegistrationKey] = useState(() => "register_" + crypto.randomUUID());
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] =
     useState<BusinessType>("sole_proprietor");
@@ -86,12 +138,13 @@ export default function App() {
   }
 
 
-  async function apiPost(path: string, body: unknown) {
+  async function apiPost(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
     const response = await fetch(path, {
       method: "POST",
       credentials: "include",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...extraHeaders
       },
       body: JSON.stringify(body)
     });
@@ -142,7 +195,7 @@ export default function App() {
     return data;
   }
 
-  async function continueToPhone() {
+  async function openPlans() {
     if (!language) {
       setMessage(t.required);
       return;
@@ -152,19 +205,14 @@ export default function App() {
     setMessage("");
 
     try {
-      // Development-only OTP bypass.
-      /*  const data = await apiPost(
-         "/api/auth/dev-continue-registration",
-         { phone_number: phone.trim() }
-       ); */
-      ///replace with above code
-      await apiPost("/api/auth/dev-continue-registration", {
-        phone_number: phone.trim(),
-      });
-      /////////////////////////////////////////////////////////////////////
-
-      setMessage("");
-      setScreen("register");
+      const response = await apiGet("/api/subscriptions/plans");
+      const available = (Array.isArray(response.data) ? response.data : []) as PaidPlan[];
+      setPlans(available.filter(plan =>
+        plan.billing_interval === "MONTHLY" &&
+        plan.trial_days === 0 &&
+        Number(plan.price_lkr) > 0
+      ));
+      setScreen("plan");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.genericError);
     } finally {
@@ -212,12 +260,53 @@ export default function App() {
       });
 
       if (data.registration_required) {
-        setScreen("register");
-        setMessage("");
+        setPhoneVerified(true);
+        if (!selectedPlanCode) {
+          await openPlans();
+        } else {
+          setScreen("register");
+          setMessage("");
+        }
       } else {
         setCurrentUser(data.user?.full_name || phone);
-        setScreen("dashboard");
-        await loadDashboard();
+        const businesses = await apiGet("/api/business/mine");
+        const list = (Array.isArray(businesses.data) ? businesses.data : []) as MemberBusiness[];
+        const active = list.find(b =>
+          b.status === "ACTIVE" && b.current_subscription_id !== null
+        );
+        const selected = active ?? list.find(b => b.status === "PENDING") ?? null;
+        setSelectedBusiness(selected);
+        setPendingCheckout(null);
+
+        if (active && (heldUiEnabled || cashbookUiEnabled)) {
+          // Never infer HOLD/FULL from cached business fields or the browser.
+          // Fail closed if the server cannot confirm the current access mode.
+          try {
+            const access = await apiGet(
+              "/api/hold-history/businesses/" + encodeURIComponent(active.id) + "/access"
+            );
+            if (access.mode === "HOLD") {
+              setScreen(heldUiEnabled ? "hold" : "checkout");
+              setMessage(heldUiEnabled ? "" : "Your subscription is on hold; new income and expenses are unavailable.");
+            } else if (access.mode === "FULL") {
+              setScreen("dashboard");
+              setMessage("");
+            } else {
+              setScreen("checkout");
+              setMessage("Subscription access requires review. No transactions are available.");
+            }
+          } catch {
+            setScreen("checkout");
+            setMessage("Could not verify subscription access. Please sign in again later.");
+          }
+        } else {
+          setScreen(active ? "dashboard" : "checkout");
+          if (!active) {
+            setMessage(selected
+              ? "Your business is pending payment confirmation. Bank checkout is not yet available in private testing."
+              : "No active business is linked to this account.");
+          }
+        }
       }
 
     } catch (error) {
@@ -240,8 +329,19 @@ export default function App() {
   }
 
   async function register() {
-    if (!fullName.trim() || !businessName.trim() || !language) {
+    if (!fullName.trim() || !email.trim() || !businessName.trim() || !language || !selectedPlanCode) {
       setMessage(t.required);
+      return;
+    }
+
+    if (!termsAccepted || !privacyAcknowledged) {
+      setMessage(t.legalRequired);
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length > 191 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setMessage(t.invalidEmail);
       return;
     }
 
@@ -249,17 +349,32 @@ export default function App() {
     setMessage("");
 
     try {
-      const data = await apiPost("/api/auth/register", {
+      const data = await apiPost("/api/auth/register-checkout", {
         full_name: fullName.trim(),
+        email: normalizedEmail,
         business_name: businessName.trim(),
         business_type: businessType,
         preferred_language: language,
+        plan_code: selectedPlanCode,
+        terms_accepted: termsAccepted,
+        privacy_acknowledged: privacyAcknowledged,
+        terms_version: REGISTRATION_TERMS_VERSION,
+        privacy_version: REGISTRATION_PRIVACY_VERSION,
+      }, {
+        "Idempotency-Key": registrationKey
       });
 
       setCurrentUser(data.user?.full_name || fullName.trim());
-      setScreen("dashboard");
-      setFormType(null);
-      await loadDashboard();
+      setPendingCheckout(data.checkout as PendingCheckout);
+      setSelectedBusiness({
+        id: data.business.id,
+        name: businessName.trim(),
+        status: "PENDING",
+        current_subscription_id: null
+      });
+      setScreen("checkout");
+      setMessage("Your account is created but not activated. Payment verification must complete before bookkeeping access.");
+      setRegistrationKey("register_" + crypto.randomUUID());
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t.genericError);
     } finally {
@@ -360,7 +475,15 @@ export default function App() {
 
     setPhone("");
     setOtp("");
+    setSelectedPlanCode(null);
+    setPhoneVerified(false);
+    setPendingCheckout(null);
+    setSelectedBusiness(null);
+    setRegistrationKey("register_" + crypto.randomUUID());
     setFullName("");
+    setEmail("");
+    setTermsAccepted(false);
+    setPrivacyAcknowledged(false);
     setBusinessName("");
     setCurrentUser("");
     setTransactions([]);
@@ -495,10 +618,7 @@ export default function App() {
             </div>
 
             <button className="primary-button" disabled={!language || loading}
-              onClick={() => {
-                setMessage("");
-                setScreen("phone");
-              }}
+              onClick={() => void openPlans()}
             >
               {t.register}
             </button>
@@ -518,6 +638,41 @@ export default function App() {
             </button>
 
 
+          </>
+        )}
+
+        {screen === "plan" && (
+          <>
+            <h2 className="screen-title">Choose your Noteto plan</h2>
+            <p>Pricing is shown before registration. Only paid, non-trial plans can currently be tested.</p>
+            {plans.length === 0 ? (
+              <p>No eligible paid plans are configured yet. Registration is unavailable.</p>
+            ) : (
+              <div className="language-list">
+                {plans.map(plan => (
+                  <button
+                    key={plan.id}
+                    type="button"
+                    className="language-option"
+                    disabled={loading}
+                    onClick={() => {
+                      setSelectedPlanCode(plan.code);
+                      setScreen(phoneVerified ? "register" : "phone");
+                      setMessage("");
+                    }}
+                  >
+                    <span className="language-name">{plan.name}</span>
+                    <span className="language-subtitle">
+                      {money(plan.price_lkr)} / month · {plan.invoice_limit} invoices
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <p>Free-trial promotions and real payments are not enabled in this development flow.</p>
+            <button className="text-button" type="button" onClick={() => setScreen("language")}>
+              {t.back}
+            </button>
           </>
         )}
 
@@ -541,24 +696,16 @@ export default function App() {
             <button
               className="primary-button"
               disabled={loading}
-              onClick={continueToPhone}
+              onClick={requestOtp}
             >
               {loading ? t.loading : t.sendOtp}
             </button>
 
             <button
               className="text-button"
-              onClick={() => setScreen("language")}
+              onClick={() => setScreen("plan")}
             >
               {t.back}
-            </button>
-
-            <button
-              className="text-button"
-              disabled={loading}
-              onClick={requestOtp}
-            >
-              Use OTP verification instead
             </button>
           </>
         )}
@@ -588,32 +735,7 @@ export default function App() {
               type="button"
               className="primary-button"
               disabled={loading}
-              onClick={async () => {
-                if (!phone.trim()) {
-                  setMessage("Enter your mobile number.");
-                  return;
-                }
-
-                setLoading(true);
-                setMessage("");
-
-                try {
-                  const data = await apiPost("/api/auth/dev-login", {
-                    phone_number: phone.trim(),
-                  });
-
-                  setCurrentUser(data.user?.full_name || phone.trim());
-                  setScreen("dashboard");
-                } catch (error) {
-                  setMessage(
-                    error instanceof Error
-                      ? error.message
-                      : "Login failed. Please try again."
-                  );
-                } finally {
-                  setLoading(false);
-                }
-              }}
+              onClick={requestOtp}
             >
               {loading ? "Please wait..." : t.login}
             </button>
@@ -712,6 +834,22 @@ export default function App() {
               onChange={(event) => setFullName(event.target.value)}
             />
 
+            <label className="field-label" htmlFor="registrationEmail">
+              {t.emailLabel} *
+            </label>
+            <input
+              id="registrationEmail"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              maxLength={191}
+              required
+              aria-required="true"
+              placeholder="owner@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+
             <label className="field-label" htmlFor="businessName">
               {t.businessName}
             </label>
@@ -737,9 +875,32 @@ export default function App() {
               <option value="community_organization">{t.community}</option>
             </select>
 
+            <section className="registration-legal" aria-labelledby="registration-legal-title">
+              <h3 id="registration-legal-title">{t.legalTitle}</h3>
+              <p>{t.legalDescription}</p>
+              <p className="legal-plan-summary">
+                {t.legalPlanLabel}: {plans.find(p => p.code === selectedPlanCode)?.name ?? selectedPlanCode}
+                {" — "}{money(plans.find(p => p.code === selectedPlanCode)?.price_lkr ?? 0)}
+              </p>
+              <p className="legal-doc-links">
+                <a href={REGISTRATION_TERMS_URL} target="_blank" rel="noopener noreferrer">{t.termsLink}</a>
+                {" · "}
+                <a href={REGISTRATION_PRIVACY_URL} target="_blank" rel="noopener noreferrer">{t.privacyLink}</a>
+              </p>
+              <label className="legal-check">
+                <input type="checkbox" checked={termsAccepted} onChange={event => setTermsAccepted(event.target.checked)} />
+                <span>{t.acceptTerms}</span>
+              </label>
+              <label className="legal-check">
+                <input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} />
+                <span>{t.acknowledgePrivacy}</span>
+              </label>
+              <p className="legal-review-warning">{t.legalDraftNotice}</p>
+            </section>
+
             <button
               className="primary-button"
-              disabled={loading}
+              disabled={loading || !termsAccepted || !privacyAcknowledged}
               onClick={register}
             >
               {loading ? t.loading : t.create}
@@ -777,7 +938,50 @@ export default function App() {
           </>
         )}
 
-        {screen === "dashboard" && (
+        {screen === "checkout" && (
+          <>
+            <h2 className="screen-title">Business activation pending</h2>
+            <p className="phone-display">{selectedBusiness?.name ?? currentUser}</p>
+            <p>Your account is not yet activated. Please do not record business transactions until payment is verified.</p>
+            {pendingCheckout && (
+              <>
+                <p>Plan: <strong>{pendingCheckout.plan_code}</strong></p>
+                <p>Checkout amount: <strong>{money(pendingCheckout.amount_lkr)}</strong></p>
+                <p>Status: <strong>{pendingCheckout.status}</strong></p>
+              </>
+            )}
+            <p>Bank payment checkout and free-trial redemption are not available in this private-testing build. No payment has been collected.</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void logout()}
+            >
+              {t.logout}
+            </button>
+          </>
+        )}
+
+        {screen === "hold" && heldUiEnabled && selectedBusiness && (
+          <HeldAccountScreen
+            key={selectedBusiness.id}
+            businessId={selectedBusiness.id}
+            businessName={selectedBusiness.name}
+            language={language ?? "en"}
+            onLogout={() => void logout()}
+          />
+        )}
+
+        {screen === "dashboard" && cashbookUiEnabled && selectedBusiness && (
+          <CoreCashbookScreen
+            key={selectedBusiness.id}
+            businessId={selectedBusiness.id}
+            businessName={selectedBusiness.name}
+            language={language ?? "en"}
+            onLogout={() => void logout()}
+          />
+        )}
+
+        {screen === "dashboard" && !cashbookUiEnabled && (
           <>
             <h2 className="screen-title">{t.dashboard}</h2>
             <p>{t.welcome}</p>
